@@ -28,7 +28,7 @@ const { commitHash } = await sharedProcess.exportStatic({
 // Older published runtimes used the developer prefix for this worker.
 const indexPath = join(root, 'dist', 'index.html')
 const index = await readFile(indexPath, 'utf8')
-const configMatch = /(<script id="Config" type="application\/json">)(.*?)(<\/script>)/.exec(index)
+const configMatch = /(<script id="Config" type="application\/json">)(.*?)(<\/script>)/s.exec(index)
 if (!configMatch) throw new Error('Exported runtime configuration not found')
 const config = JSON.parse(configMatch[2])
 config.syntaxHighlightingWorkerUrl ||=
