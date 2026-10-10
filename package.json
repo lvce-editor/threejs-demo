@@ -1,0 +1,39 @@
+{
+  "name": "@lvce-editor/threejs-demo-monorepo",
+  "version": "0.0.0-dev",
+  "description": "Edit an npm Three.js scene in TypeScript with a live Lvce Editor preview",
+  "license": "MIT",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build:extension && npm run build:site",
+    "build:extension": "node packages/build/src/build-extension.ts",
+    "build:site": "node packages/build/src/build-static-site.ts",
+    "dev": "node packages/build/src/dev.ts",
+    "e2e": "npm run build && npm run e2e --workspace=packages/e2e",
+    "e2e:headless": "npm run build && npm run e2e:headless --workspace=packages/e2e",
+    "format": "prettier --write .",
+    "lint": "eslint . && prettier --check .",
+    "test": "npm test --workspaces --if-present",
+    "type-check": "tsc -b"
+  },
+  "prettier": {
+    "semi": false,
+    "singleQuote": true,
+    "printWidth": 150
+  },
+  "devDependencies": {
+    "@lvce-editor/eslint-config": "^18.14.2",
+    "eslint": "^10.12.0",
+    "prettier": "^3.9.6",
+    "typescript": "^6.0.3",
+    "@types/three": "^0.186.0",
+    "esbuild-wasm": "^0.28.2",
+    "typescript-eslint": "^8.71.1"
+  },
+  "dependencies": {
+    "three": "^0.186.1"
+  }
+}

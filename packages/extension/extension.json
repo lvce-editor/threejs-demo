@@ -1,0 +1,17 @@
+{
+  "id": "builtin.threejs-demo",
+  "name": "Three.js Demo",
+  "description": "Rebuilds a TypeScript Three.js scene in the browser and opens a live preview",
+  "browser": "dist/extensionMain.js",
+  "contentSecurityPolicy": ["default-src 'none'", "script-src 'self' 'unsafe-eval'", "connect-src 'self'"],
+  "isolated": true,
+  "categories": ["Other"],
+  "activation": ["onCommand:threejs.initializeWorkspace", "onCommand:threejs.openDemo"],
+  "commands": [
+    { "id": "threejs.initializeWorkspace", "label": "Three.js: Initialize Workspace" },
+    {
+      "id": "threejs.openDemo",
+      "label": "Three.js: Open Demo"
+    }
+  ]
+}
