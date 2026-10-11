@@ -111,6 +111,15 @@ const instrumentSandbox = (source: string): string => {
     source = source.replace(seam, () => (counter === 'ticks' ? `${seam}\n${trace}` : `${trace}\n${seam}`))
   }
   const scriptSeams = [
+    ['const dynamicCanvasCount = getCanvasCreationCount(scripts);', 'canvas-count-start', false],
+    ['await patchCanvasElements(happyDomDocument, uid, dynamicCanvasCount);', 'canvas-count-end', false],
+    ['remove$2(uid);\n  set$1(uid, {', 'canvas-disposal-start', false],
+    ['const canvasElements = document.querySelectorAll', 'canvas-disposal-end', false],
+    ["webglContext?.getExtension('WEBGL_lose_context')?.loseContext();", 'context-loss-start', false],
+    ['webglContext = null;\n  };', 'context-loss-end', false],
+    ["await invoke$1('Preview.createOffscreenCanvas', uid, id, width, height);", 'canvas-request-start', false],
+    ['const [offscreenCanvas, canvasId, presentationPort] = await promise;', 'canvas-request-end', false],
+    ['return {\n    canvasId,\n    offscreenCanvas,\n    presentationPort', 'canvas-transfer-end', false],
     ['const functionNames = getTopLevelFunctionNames(scriptContent);', 'script-scan-start', false],
     ['const suffix = names.map', 'script-scan-end', false],
     ['fn.call(window, window, document, runtimeConsole);\n    } catch', 'script-execution-end', true],
