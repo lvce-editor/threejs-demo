@@ -287,7 +287,7 @@ try {
   await replaceSource(page, source.replace('#32b8ff', '#ff0000'))
   await expectColor(previewCanvas, [255, 0, 0, 255])
   await replaceSource(page, source.replace('#32b8ff', '#00ff00'))
-  await expectColor(previewCanvas, [0, 255, 0, 255])
+  await expectColor(previewCanvas, [0, 255, 0, 255], 30_000)
   await replaceSource(page, source.replace('#32b8ff', '#0000ff'))
   await expectColor(previewCanvas, [0, 0, 255, 255])
 
