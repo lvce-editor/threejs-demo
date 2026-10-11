@@ -170,17 +170,22 @@ const expectImageChanged = async (canvas: Locator, before: Buffer): Promise<void
 
 const replaceSource = async (page: Page, source: string, save: boolean = true): Promise<void> => {
   await page.locator('.Editor textarea').focus()
+  const current = (await rendererCommand(page, 'GetActiveEditor.getTextDocument')) as { text: string }
+  const lines = current.text.split('\n')
   await page.keyboard.press('Control+a')
-  if (process.env.THREEJS_DEMO_BROWSER === 'firefox') {
-    // Firefox's insertText transport does not send the editor's insertText input.
-    await page.locator('.Editor textarea').evaluate((target, text) => {
-      const clipboardData = new DataTransfer()
-      clipboardData.setData('text/plain', text)
-      target.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData }))
-    }, source)
-  } else {
-    await page.keyboard.insertText(source)
-  }
+  await expect.poll(() => rendererCommand(page, 'GetActiveEditor.getSelections')).toEqual([0, 0, lines.length - 1, lines.at(-1)!.length])
+  // Paste preserves the complete input while selection/render commands settle.
+  await page.locator('.Editor textarea').evaluate((target, text) => {
+    const clipboardData = new DataTransfer()
+    clipboardData.setData('text/plain', text)
+    target.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData }))
+  }, source)
+  await expect
+    .poll(async () => {
+      const document = (await rendererCommand(page, 'GetActiveEditor.getTextDocument')) as { text: string } | undefined
+      return document?.text
+    })
+    .toBe(source)
   if (save) await page.keyboard.press('Control+s')
 }
 
