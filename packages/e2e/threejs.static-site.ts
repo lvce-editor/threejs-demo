@@ -83,27 +83,6 @@ const getFilePath = (requestUrl: string): string | undefined => {
 }
 
 const instrumentSandbox = (source: string): string => {
-  const countStart = 'const getScriptCanvasCreationCount = script => {'
-  const variablesStart = 'const getTopLevelVariableNames = script => {'
-  if (!source.includes(countStart) || !source.includes(variablesStart)) throw new Error('Script parse reuse probe seam is missing')
-  const parseStart = 'const ast = libExports.parse(script, {'
-  const countOffset = source.indexOf(countStart)
-  const countSource = source
-    .slice(countOffset)
-    .replace('return visit(ast);', () => 'globalThis.__threejsParsedScript = { script, ast }; return visit(ast);')
-  source = source.slice(0, countOffset) + countSource
-  const variableOffset = source.indexOf(variablesStart)
-  const variableEnd = source.indexOf('\n};', variableOffset) + 3
-  const variableSource = source
-    .slice(variableOffset, variableEnd)
-    .replace(
-      parseStart,
-      () => 'const ast = globalThis.__threejsParsedScript?.script === script ? globalThis.__threejsParsedScript.ast : libExports.parse(script, {',
-    )
-  source =
-    source.slice(0, variableOffset) +
-    variableSource.replace('const names = [];', () => 'globalThis.__threejsParsedScript = undefined; const names = [];') +
-    source.slice(variableEnd)
   const create = 'const createCanvasFrameSink = (canvas, port) => {'
   const dispose = 'dispose: () => {\n      if (disposed) return;'
   if (!source.includes(create) || !source.includes(dispose)) throw new Error('Sandbox lifecycle trace seam is missing')
@@ -200,13 +179,15 @@ const instrumentNative = (source: string): Buffer<ArrayBuffer> => {
   )
   source = source.replace(dispose, () => `frameTrace.disposed = Date.now(); ${dispose}`)
   if (!source.includes('canvasPresentation: presentation')) throw new Error('Published native presentation ownership is missing')
+  if (!source.includes('port1.onmessageerror = () => {')) throw new Error('Published native frame error recovery is missing')
   const receive = 'port1.onmessage = event => {'
   if (!source.includes(receive)) throw new Error('Native receive trace seam is missing')
   source = source.replace(
     receive,
-    () => `port1.onmessageerror = () => {
+    () => `const onMessageError = port1.onmessageerror;
+    port1.onmessageerror = event => {
       frameTrace.messageError = Date.now();
-      if (!disposed) port1.postMessage({ type: 'presented' });
+      onMessageError?.call(port1, event);
     };
         ${receive}
         frameTrace.messages = (frameTrace.messages || 0) + 1;
