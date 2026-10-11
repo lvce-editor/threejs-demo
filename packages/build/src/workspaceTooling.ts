@@ -33,7 +33,7 @@ export const workspaceTooling = async (): Promise<Record<string, string>> => {
   await addTypes('@types/three')
   for (const [name, entry] of [
     ['eslint', 'eslint/universal'],
-    ['typescript-eslint', 'typescript-eslint'],
+    ['@typescript-eslint/eslint-plugin', '@typescript-eslint/eslint-plugin'],
   ]) {
     const result = await build({
       entryPoints: [require.resolve(entry)],
@@ -58,6 +58,6 @@ export const workspaceTooling = async (): Promise<Record<string, string>> => {
     files[`/node_modules/${name}/package.json`] = JSON.stringify({ name, main: 'index.cjs' })
   }
   files['/eslint.config.js'] =
-    "import tseslint from 'typescript-eslint'\nexport default [...tseslint.configs.recommended, { files: ['**/*.ts'], rules: { '@typescript-eslint/no-unused-vars': 'error' } }]\n"
+    "import tsPlugin from '@typescript-eslint/eslint-plugin'\nexport default [...tsPlugin.configs['flat/recommended'], { files: ['**/*.ts'], rules: { '@typescript-eslint/no-unused-vars': 'error' } }]\n"
   return files
 }

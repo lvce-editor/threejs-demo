@@ -16,7 +16,7 @@ export const verifyFirefoxCompilerWarnings = async (url: string): Promise<void> 
     warnings.length = 0
 
     // Parse both shipped compiler copies, including the CJS source that ESLint
-    // compiles dynamically. Runtime shims are exercised by the Chromium UI test.
+    // compiles dynamically. Runtime shims are exercised by the full scene lifecycle tests.
     const indexResponse = await fetch(url)
     if (!indexResponse.ok) throw new Error(`Index request failed: ${indexResponse.status}`)
     const index = await indexResponse.text()
@@ -29,7 +29,7 @@ export const verifyFirefoxCompilerWarnings = async (url: string): Promise<void> 
     const workspaceResponse = await fetch(workspaceUrl)
     if (!workspaceResponse.ok) throw new Error(`Workspace request failed: ${workspaceResponse.status}`)
     const workspace = await workspaceResponse.json()
-    const source = workspace['/node_modules/typescript-eslint/index.cjs']
+    const source = workspace['/node_modules/@typescript-eslint/eslint-plugin/index.cjs']
     if (typeof source !== 'string') throw new Error('Bundled TypeScript ESLint source is missing')
     // Parse on a blank page: the product compiles this source in a worker with
     // its own CSP, rather than in the main page's restricted script context.

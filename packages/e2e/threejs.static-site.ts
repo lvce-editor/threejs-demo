@@ -1,9 +1,10 @@
+/// <reference lib="dom" />
 import { expect, type Locator, type Page } from '@playwright/test'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { extname, join, normalize, sep } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import { chromium } from 'playwright'
+import { chromium, firefox } from 'playwright'
 import { PNG } from 'pngjs'
 import { verifyFirefoxCompilerWarnings } from './firefoxCompilerWarnings.ts'
 
@@ -105,10 +106,31 @@ const expectColor = async (canvas: Locator, color: readonly number[]): Promise<v
     .toEqual(color)
 }
 
+const expectAnimation = async (canvas: Locator): Promise<void> => {
+  const bounds = await canvas.boundingBox()
+  if (!bounds) throw new Error('Scene canvas has no bounds')
+  const firstFrame = PNG.sync.read(await canvas.page().screenshot({ clip: bounds })).data
+  await expect
+    .poll(async () => {
+      const nextFrame = PNG.sync.read(await canvas.page().screenshot({ clip: bounds })).data
+      return firstFrame.equals(nextFrame)
+    })
+    .toBe(false)
+}
+
 const replaceSource = async (page: Page, source: string, save: boolean = true): Promise<void> => {
   await page.locator('.Editor textarea').focus()
   await page.keyboard.press('Control+a')
-  await page.keyboard.insertText(source)
+  if (process.env.THREEJS_DEMO_BROWSER === 'firefox') {
+    // Firefox's insertText transport does not send the editor's insertText input.
+    await page.locator('.Editor textarea').evaluate((target, text) => {
+      const clipboardData = new DataTransfer()
+      clipboardData.setData('text/plain', text)
+      target.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData }))
+    }, source)
+  } else {
+    await page.keyboard.insertText(source)
+  }
   if (save) await page.keyboard.press('Control+s')
 }
 
@@ -135,7 +157,8 @@ if (!address || typeof address === 'string') {
   throw new Error('Failed to start static test server')
 }
 
-const browser = await chromium.launch({ headless: true })
+const browserType = process.env.THREEJS_DEMO_BROWSER === 'firefox' ? firefox : chromium
+const browser = await browserType.launch({ headless: true })
 const errors: string[] = []
 try {
   const page = await browser.newPage()
@@ -158,6 +181,7 @@ try {
   await verifyFirefoxCompilerWarnings(url)
   const sourceFirstLine = page.locator('.EditorRow', { hasText: "import * as THREE from 'three'" })
   const previewCanvas = page.locator('.Viewlet.Preview #scene')
+  const errorView = page.locator('.ViewletErrorMessage')
 
   await page.goto(url)
   try {
@@ -170,8 +194,32 @@ try {
     await page.screenshot({ path: join(artifacts, 'startup.png') })
     throw error
   }
-  await expect(previewCanvas).toBeVisible()
+  await expect(previewCanvas).toBeVisible({ timeout: 30_000 })
   await expectColor(previewCanvas, [50, 184, 255, 255])
+  await expectAnimation(previewCanvas)
+  const executeCommand = async (command: string, ...args: unknown[]): Promise<void> => {
+    const config = await page.locator('#Config').textContent()
+    const { assetDir } = JSON.parse(config!)
+    await page.evaluate(
+      async ({ args, command, entry }) => {
+        const renderer = await import(entry)
+        await renderer.executeCommand(command, ...args)
+      },
+      { args, command, entry: `${assetDir}/packages/renderer-process/dist/rendererProcessMain.js` },
+    )
+  }
+  for (let iteration = 0; iteration < 3; iteration++) {
+    await executeCommand('Layout.showPreview', 'memfs:///threejs/index.html')
+    await expectColor(previewCanvas, [50, 184, 255, 255])
+    // eslint-disable-next-line e2e/no-direct-click -- exercises the native preview-tab disposal handler
+    await page.getByRole('button', { exact: true, name: 'Close HTML Preview' }).last().click()
+    await expectColor(previewCanvas, [50, 184, 255, 255])
+  }
+  await executeCommand('Layout.openIntegratedTerminal')
+  await expect(page.getByText('Terminals are unavailable in this web workspace.', { exact: false })).toBeVisible()
+  await expect(errorView).toHaveCount(0)
+  await expectColor(previewCanvas, [50, 184, 255, 255])
+  await executeCommand('Layout.hidePanel')
   const resourceCounts = async (): Promise<{ contexts: number; timers: number }> => {
     const worker = page.workers().find((worker) => worker.url().includes('/preview-sandbox-worker/'))
     if (!worker) throw new Error('Sandbox worker is missing')
@@ -187,6 +235,14 @@ try {
   await expect.poll(contextsCount).toBe(1)
   const initialResources = await resourceCounts()
   const initialTimers = initialResources.timers
+  // Closing the final preview must release its context while the shared worker survives.
+  // eslint-disable-next-line e2e/no-direct-click -- exercises the native preview-tab disposal handler
+  await page.getByRole('button', { exact: true, name: 'Close HTML Preview' }).click()
+  await expect(previewCanvas).toHaveCount(0)
+  await expect.poll(contextsCount).toBe(0)
+  await executeCommand('Layout.showPreview', 'memfs:///threejs/index.html')
+  await expectColor(previewCanvas, [50, 184, 255, 255])
+  await expect.poll(contextsCount).toBe(1)
   const source = await readFile(join(import.meta.dirname, '../../src/main.ts'), 'utf8')
   await replaceSource(page, `${source}\nexport const typeMismatch: number = "invalid"\nexport type Unsafe = any\n`, false)
   await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain("Type 'string' is not assignable to type 'number'")
@@ -226,9 +282,12 @@ try {
 
   await page.reload()
   await expect(sourceFirstLine).toBeVisible()
-  await expect(previewCanvas).toBeVisible()
+  await expect(previewCanvas).toBeVisible({ timeout: 30_000 })
   await expectColor(previewCanvas, [50, 184, 255, 255])
+  await expectAnimation(previewCanvas)
   expect(errors.filter((error) => error.includes('Failed to hash ESLint files in one batch'))).toEqual([])
+  expect(errors.filter((error) => /(?:undefined.*send|send.*undefined)/.test(error))).toEqual([])
+  await expect(errorView).toHaveCount(0)
 } catch (error) {
   const artifacts = join(staticRoot, '..', 'e2e-artifacts')
   await mkdir(artifacts, { recursive: true })

@@ -9,8 +9,8 @@
     "tar": "^7.5.1"
   },
   "dependencies": {
-    "@lvce-editor/preview-sandbox-worker": "^4.16.0",
-    "@lvce-editor/preview-worker": "^6.18.2",
+    "@lvce-editor/preview-sandbox-worker": "^4.17.0",
+    "@lvce-editor/preview-worker": "^6.18.4",
     "@lvce-editor/renderer-process": "^30.68.15"
   }
 }
