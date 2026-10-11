@@ -180,7 +180,6 @@ const handleRequest = async (request: IncomingMessage, response: ServerResponse)
       const create = 'const createCanvasPresentation = (canvas, onDispose) => {'
       const dispose = 'port1.close();\n    onDispose();'
       if (!source.includes(create) || !source.includes(dispose)) throw new Error('Native lifecycle trace seam is missing')
-      const seam = 'context.transferFromImageBitmap(bitmap);'
       source = source.replace(
         create,
         () => `${create}
@@ -191,6 +190,16 @@ const handleRequest = async (request: IncomingMessage, response: ServerResponse)
         `,
       )
       source = source.replace(dispose, () => `frameTrace.disposed = Date.now(); ${dispose}`)
+      const ownership = `const presentation = createCanvasPresentation(canvas, () => set$c(canvasId, undefined));
+  set$c(canvasId, {
+    factory: {},
+    state: {
+      $Viewlet: canvas
+    }
+  });`
+      if (!source.includes(ownership)) throw new Error('Native presentation ownership candidate seam is missing')
+      source = source.replace(ownership, () => ownership.replace('$Viewlet: canvas\n', '$Viewlet: canvas,\n      canvasPresentation: presentation\n'))
+      const seam = 'context.transferFromImageBitmap(bitmap);'
       if (!source.includes(seam)) throw new Error('Native presentation trace seam is missing')
       content = Buffer.from(
         source.replace(
