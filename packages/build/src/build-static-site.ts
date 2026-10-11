@@ -41,17 +41,17 @@ if (!config.syntaxHighlightingWorkerUrl) throw new Error('Exported syntax highli
 // This dedicated demo must seed memfs on every load, including profiles that
 // saved the editor's old useOnLoadJson=false default. Run before module startup
 // so restored memfs tabs are replaced by the initialized demo workspace.
-const demoStartup = `<script>
-try {
+const demoStartup = `try {
   const settings = JSON.parse(localStorage.getItem('settings') || '{}')
   settings['application.useOnLoadJson'] = true
   localStorage.setItem('settings', JSON.stringify(settings))
 } catch {
   // Storage may be unavailable; the exported default still enables startup.
 }
-</script>`
+`
+await writeFile(join(root, 'dist', 'demo-startup.js'), demoStartup)
 const configuredIndex = index.replace(configMatch[0], `${configMatch[1]}${JSON.stringify(config)}${configMatch[3]}`)
-await writeFile(indexPath, configuredIndex.replace('</head>', `${demoStartup}\n</head>`))
+await writeFile(indexPath, configuredIndex.replace('</head>', `<script src="/threejs-demo/demo-startup.js"></script>\n</head>`))
 
 // This exported application always runs on the web, including eager module initialization.
 const rendererPath = join(root, 'dist', commitHash, 'packages', 'renderer-worker', 'dist', 'rendererWorkerMain.js')
