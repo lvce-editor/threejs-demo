@@ -2,6 +2,7 @@ import { build } from 'esbuild'
 import { readdir, readFile } from 'node:fs/promises'
 import { builtinModules, createRequire } from 'node:module'
 import { join } from 'node:path'
+import { removeUnreachableTypeScriptCode } from './removeUnreachableTypeScriptCode.ts'
 import { root } from './root.ts'
 
 const require = createRequire(import.meta.url)
@@ -41,6 +42,17 @@ export const workspaceTooling = async (): Promise<Record<string, string>> => {
       format: 'cjs',
       external: ['node:*', ...builtinModules, 'jiti', 'jiti/package.json'],
       write: false,
+      plugins: [
+        {
+          name: 'typescript-browser-compatibility',
+          setup(build) {
+            build.onLoad({ filter: /[/\\]typescript[/\\]lib[/\\]typescript\.js$/ }, async ({ path }) => ({
+              contents: removeUnreachableTypeScriptCode(await readFile(path, 'utf8')),
+              loader: 'js',
+            }))
+          },
+        },
+      ],
     })
     files[`/node_modules/${name}/index.cjs`] = result.outputFiles[0].text
     files[`/node_modules/${name}/package.json`] = JSON.stringify({ name, main: 'index.cjs' })

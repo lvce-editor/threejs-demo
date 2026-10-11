@@ -2,6 +2,7 @@ import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { build } from 'esbuild'
+import { removeUnreachableTypeScriptCode } from './removeUnreachableTypeScriptCode.ts'
 import { root } from './root.ts'
 import { installExtension } from './installExtension.ts'
 
@@ -67,6 +68,8 @@ for (const name of ['renderer-process', 'preview-sandbox-worker', 'preview-worke
 const extensionId = 'builtin.threejs-demo'
 await installExtension('eslint', '1.25.2', commitHash)
 await installExtension('language-features-typescript', '5.31.0', commitHash)
+const compilerPath = join(root, 'dist', commitHash, 'extensions', 'builtin.language-features-typescript', 'typescript', 'lib', 'typescript-esm.js')
+await writeFile(compilerPath, removeUnreachableTypeScriptCode(await readFile(compilerPath, 'utf8')))
 await cp(join(root, 'packages', 'extension', 'dist'), join(root, 'dist', commitHash, 'extensions', extensionId, 'dist'), {
   force: true,
   recursive: true,
