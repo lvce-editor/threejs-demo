@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { build } from 'esbuild'
 import { removeUnreachableTypeScriptCode } from './removeUnreachableTypeScriptCode.ts'
 import { root } from './root.ts'
@@ -28,6 +28,13 @@ const { commitHash } = await sharedProcess.exportStatic({
   root,
   testPath: 'packages/e2e',
 })
+
+// Keep the exported static runtime on the released RPC URL registration fix.
+const extensionManagementWorkerPath = fileURLToPath(import.meta.resolve('@lvce-editor/extension-management-worker'))
+await cp(
+  extensionManagementWorkerPath,
+  join(root, 'dist', commitHash, 'packages', 'extension-management-worker', 'dist', 'extensionManagementWorkerMain.js'),
+)
 
 // Supply the renderer's explicit URL from the exported worker configuration.
 // Older published runtimes used the developer prefix for this worker.
