@@ -1,0 +1,9 @@
+{
+  "name": "@lvce-editor/threejs-demo-server",
+  "version": "0.0.0-dev",
+  "license": "MIT",
+  "type": "module",
+  "dependencies": {
+    "@lvce-editor/server": "^0.121.23"
+  }
+}

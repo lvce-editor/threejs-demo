@@ -1,0 +1,16 @@
+{
+  "name": "@lvce-editor/threejs-demo-e2e",
+  "version": "0.0.0-dev",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "e2e": "node threejs.static-site.ts",
+    "e2e:headless": "node threejs.static-site.ts"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1",
+    "@types/node": "^26.4.1",
+    "pngjs": "^7.0.0",
+    "@types/pngjs": "^6.0.5"
+  }
+}

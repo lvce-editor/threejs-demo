@@ -1,0 +1,13 @@
+{
+  "name": "@lvce-editor/threejs-demo-extension",
+  "version": "0.0.0-dev",
+  "description": "Opens the Three.js live demo",
+  "license": "MIT",
+  "type": "module",
+  "devDependencies": {
+    "@lvce-editor/api": "^9.28.3"
+  },
+  "scripts": {
+    "test": "node --test \"test/**/*.test.ts\""
+  }
+}
