@@ -6,6 +6,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { chromium } from 'playwright'
 import { PNG } from 'pngjs'
 import { verifyFirefoxCompilerWarnings } from './firefoxCompilerWarnings.ts'
+import { measureStartup } from './startupMetrics.ts'
 
 const responseDelay = Number(process.env.THREEJS_DEMO_LATENCY_MS || 0)
 if (!Number.isSafeInteger(responseDelay) || responseDelay < 0) throw new Error('THREEJS_DEMO_LATENCY_MS must be a nonnegative integer')
@@ -155,7 +156,11 @@ try {
   page.on('requestfailed', (request) => {
     errors.push(`${request.failure()?.errorText} ${request.url()}`)
   })
+  const forbiddenWorkers: string[] = []
   page.on('worker', (worker) => {
+    if (/\/(?:panel-worker|icon-theme-worker|status-bar-worker|source-control-worker|output-view|activity-bar-worker)\//.test(worker.url())) {
+      forbiddenWorkers.push(worker.url())
+    }
     errors.push(`worker ${worker.url()}`)
   })
   const url = process.env.THREEJS_DEMO_URL || `http://127.0.0.1:${address.port}${pathPrefix}/`
@@ -163,6 +168,30 @@ try {
   const sourceFirstLine = page.locator('.EditorRow', { hasText: "import * as THREE from 'three'" })
   const previewCanvas = page.locator('.Viewlet.Preview #scene')
 
+  await page.addInitScript(() => {
+    const startup = { visibleBars: [] as string[] }
+    Object.defineProperty(globalThis, '__threejsStartup', { value: startup })
+    const observe = (): void => {
+      for (const selector of ['.ActivityBar', '.StatusBar']) {
+        const element = document.querySelector(selector)
+        if (!element) continue
+        const { height, width } = element.getBoundingClientRect()
+        const style = getComputedStyle(element)
+        if (width > 0 && height > 0 && style.visibility !== 'hidden' && style.display !== 'none') startup.visibleBars.push(selector)
+      }
+      requestAnimationFrame(observe)
+    }
+    requestAnimationFrame(observe)
+  })
+  const assertLeanStartup = async (): Promise<void> => {
+    expect(forbiddenWorkers).toEqual([])
+    expect(page.workers().filter((worker) => worker.url().endsWith('/typescriptWorkerMain.js'))).toHaveLength(0)
+    expect(await page.evaluate(() => Object.getOwnPropertyDescriptor(globalThis, '__threejsStartup')?.value.visibleBars)).toEqual([])
+    const icon = page.getByRole('tab', { exact: true, name: 'main.ts Close' }).locator('img.TabIcon')
+    await expect(icon).toBeVisible()
+    await expect(icon).toHaveAttribute('src', /\/file_type_typescript\.svg$/)
+    await expect.poll(() => icon.evaluate((element: HTMLImageElement) => element.complete && element.naturalWidth > 0)).toBe(true)
+  }
   await page.goto(url)
   try {
     await expect(sourceFirstLine).toBeVisible()
@@ -190,6 +219,10 @@ try {
     return counts.contexts
   }
   await expect.poll(contextsCount).toBe(1)
+  if (process.env.THREEJS_DEMO_METRICS) {
+    await writeFile(process.env.THREEJS_DEMO_METRICS, JSON.stringify(await measureStartup(browser), null, 2))
+  }
+  await assertLeanStartup()
   const initialResources = await resourceCounts()
   const initialTimers = initialResources.timers
   const source = await readFile(join(import.meta.dirname, '../../src/main.ts'), 'utf8')
@@ -235,6 +268,22 @@ try {
   await expectColor(previewCanvas, [50, 184, 255, 255])
   expect(navigationErrors(errors)).toEqual([])
   expect(errors.filter((error) => error.includes('Failed to hash ESLint files in one batch'))).toEqual([])
+  await assertLeanStartup()
+  // Request completions without editing the newly reloaded, verified document.
+  await page.locator('.Editor textarea').focus()
+  await page.keyboard.press('Control+Home')
+  for (let row = 0; row < 5; row++) await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('Home')
+  for (let column = 0; column < 9; column++) await page.keyboard.press('ArrowRight')
+  await page.keyboard.press('Control+Space')
+  const completionItem = page.locator('.EditorCompletionItem').filter({ hasText: 'setSize' }).first()
+  await expect(completionItem).toBeVisible({ timeout: 30_000 })
+  expect(page.workers().filter((worker) => worker.url().endsWith('/typescriptWorkerMain.js'))).toHaveLength(1)
+  await page.keyboard.press('Escape')
+  await page.setViewportSize({ height: 700, width: 1000 })
+  await expect(previewCanvas).toBeVisible()
+  await expectColor(previewCanvas, [50, 184, 255, 255])
+  expect(forbiddenWorkers).toEqual([])
 } catch (error) {
   const artifacts = join(staticRoot, '..', 'e2e-artifacts')
   await mkdir(artifacts, { recursive: true })

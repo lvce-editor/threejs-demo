@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -35,6 +36,16 @@ const index = await readFile(indexPath, 'utf8')
 const configMatch = /(<script id="Config" type="application\/json">)(.*?)(<\/script>)/s.exec(index)
 if (!configMatch) throw new Error('Exported runtime configuration not found')
 const config = JSON.parse(configMatch[2])
+config.initialLayout = {
+  activityBarVisible: false,
+  statusBarVisible: false,
+  titleBarVisible: false,
+  sideBarVisible: false,
+  secondarySideBarVisible: false,
+  panelVisible: false,
+}
+config.staticFileIcons = { 'main.ts': `${config.assetDir}/extensions/builtin.vscode-icons/icons/file_type_typescript.svg` }
+config.previewOutputEnabled = false
 config.syntaxHighlightingWorkerUrl ||=
   config.workerUrls['develop.syntaxHighlightingWorkerPath'] || config.workerUrls['developer.syntaxHighlightingWorkerPath']
 if (!config.syntaxHighlightingWorkerUrl) throw new Error('Exported syntax highlighting worker URL not found')
@@ -56,6 +67,19 @@ await writeFile(rendererPath, renderer.outputFiles[0].contents)
 const defaultSettingsPath = join(root, 'dist', commitHash, 'config', 'defaultSettings.json')
 const defaultSettings = JSON.parse(await readFile(defaultSettingsPath, 'utf8'))
 defaultSettings['application.useOnLoadJson'] = true
+const workspaceFiles = JSON.parse(await readFile(join(root, 'packages/extension/dist/workspace.json'), 'utf8'))
+const textHash = (text: string): string => createHash('sha256').update(text).digest('hex')
+// The scene type-check and generated fixed project dependencies validate this text.
+// Changed text/configuration resumes checking before the TypeScript worker is started.
+defaultSettings['typescript.verifiedDiagnostics'] = [
+  {
+    uri: 'memfs:///threejs/src/main.ts',
+    hash: textHash(workspaceFiles['/src/main.ts']),
+    configUri: 'memfs:///threejs/tsconfig.json',
+    configHash: textHash(workspaceFiles['/tsconfig.json']),
+  },
+]
+defaultSettings['eslint.ignoreHashes'] = [textHash(workspaceFiles['/src/main.ts'])]
 await writeFile(defaultSettingsPath, `${JSON.stringify(defaultSettings, null, 2)}\n`)
 
 for (const name of ['renderer-process', 'preview-sandbox-worker', 'preview-worker']) {
