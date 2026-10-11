@@ -258,6 +258,7 @@ try {
     errors.push(error.stack || error.message)
   })
   page.on('console', (message) => {
+    if (message.text().includes('[threejs-build]')) process.stdout.write(`${message.text()}\n`)
     if (message.type() === 'error' || message.type() === 'warning') errors.push(message.text())
   })
   page.on('response', (response) => {

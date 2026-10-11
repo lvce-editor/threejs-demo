@@ -63,9 +63,18 @@ const openDemo = async (): Promise<void> => {
     const compiler = createCompiler()
     state.compiler = compiler
     state.rebuild = createRebuilder({
-      build: () => compiler.compile((path) => readFile(`${workspace}${path}`)),
+      build: async () => {
+        const started = performance.now()
+        console.warn('[threejs-build]', JSON.stringify({ stage: 'compile-start', time: Date.now() }))
+        const code = await compiler.compile((path) => readFile(`${workspace}${path}`))
+        console.warn('[threejs-build]', JSON.stringify({ duration: performance.now() - started, stage: 'compile-end', time: Date.now() }))
+        return code
+      },
       publish: async (code) => {
+        const started = performance.now()
+        console.warn('[threejs-build]', JSON.stringify({ stage: 'publish-start', time: Date.now() }))
         await writeFile(`${workspace}/dist/main.js`, code)
+        console.warn('[threejs-build]', JSON.stringify({ duration: performance.now() - started, stage: 'write-end', time: Date.now() }))
         if (state.previewOpened) await executeCommand('SimpleBrowser.reload')
         else {
           await executeCommand('Layout.showPreview', `${workspace}/index.html`)
@@ -75,6 +84,7 @@ const openDemo = async (): Promise<void> => {
           await executeCommand('Preferences.update', { 'editor.diagnostics': true })
           await executeCommand('GetActiveEditor.updateDiagnostics')
         }
+        console.warn('[threejs-build]', JSON.stringify({ duration: performance.now() - started, stage: 'publish-end', time: Date.now() }))
       },
       reportError: async (error) => {
         await executeCommand('Notification.create', 'error', `Build failed: ${String(error)}`)

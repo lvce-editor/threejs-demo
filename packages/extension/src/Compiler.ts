@@ -6,6 +6,8 @@ const getBuildOptions = (three: string, readSource: ReadSource): esbuild.BuildOp
   bundle: true,
   entryPoints: ['/src/main.ts'],
   format: 'iife',
+  minifySyntax: true,
+  minifyWhitespace: true,
   platform: 'browser',
   plugins: [
     {
