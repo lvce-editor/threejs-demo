@@ -183,7 +183,10 @@ const instrumentNative = (source: string): Buffer<ArrayBuffer> => {
   if (!source.includes(receive)) throw new Error('Native receive trace seam is missing')
   source = source.replace(
     receive,
-    () => `port1.onmessageerror = () => { frameTrace.messageError = Date.now(); };
+    () => `port1.onmessageerror = () => {
+      frameTrace.messageError = Date.now();
+      if (!disposed) port1.postMessage({ type: 'presented' });
+    };
         ${receive}
         frameTrace.messages = (frameTrace.messages || 0) + 1;
         frameTrace.last_message = Date.now();`,
