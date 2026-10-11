@@ -208,11 +208,14 @@ try {
       { args, command, entry: `${assetDir}/packages/renderer-process/dist/rendererProcessMain.js` },
     )
   }
+  const previewCloseButtons = page.getByRole('button', { exact: true, name: 'Close HTML Preview' })
   for (let iteration = 0; iteration < 3; iteration++) {
     await executeCommand('Layout.showPreview', 'memfs:///threejs/index.html')
+    await expect(previewCloseButtons).toHaveCount(2)
     await expectColor(previewCanvas, [50, 184, 255, 255])
     // eslint-disable-next-line e2e/no-direct-click -- exercises the native preview-tab disposal handler
-    await page.getByRole('button', { exact: true, name: 'Close HTML Preview' }).last().click()
+    await previewCloseButtons.last().click()
+    await expect(previewCloseButtons).toHaveCount(1)
     await expectColor(previewCanvas, [50, 184, 255, 255])
   }
   await executeCommand('Layout.openIntegratedTerminal')

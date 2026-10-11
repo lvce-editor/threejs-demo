@@ -46,6 +46,7 @@ const renderer = await build({
   bundle: true,
   entryPoints: [rendererPath],
   define: { PLATFORM: '1' },
+  external: ['electron'],
   format: 'esm',
   minify: true,
   platform: 'browser',
