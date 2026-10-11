@@ -49,18 +49,6 @@ config.previewOutputEnabled = false
 config.syntaxHighlightingWorkerUrl ||=
   config.workerUrls['develop.syntaxHighlightingWorkerPath'] || config.workerUrls['developer.syntaxHighlightingWorkerPath']
 if (!config.syntaxHighlightingWorkerUrl) throw new Error('Exported syntax highlighting worker URL not found')
-// This dedicated demo must seed memfs on every load, including profiles that
-// saved the editor's old useOnLoadJson=false default. Run before module startup
-// so restored memfs tabs are replaced by the initialized demo workspace.
-const demoStartup = `try {
-  const settings = JSON.parse(localStorage.getItem('settings') || '{}')
-  settings['application.useOnLoadJson'] = true
-  localStorage.setItem('settings', JSON.stringify(settings))
-} catch {
-  // Storage may be unavailable; the exported default still enables startup.
-}
-`
-await writeFile(join(root, 'dist', 'demo-startup.js'), demoStartup)
 const configuredIndex = index.replace(configMatch[0], `${configMatch[1]}${JSON.stringify(config)}${configMatch[3]}`)
 await writeFile(indexPath, configuredIndex.replace('</head>', `<script src="/threejs-demo/demo-startup.js"></script>\n</head>`))
 
@@ -95,6 +83,23 @@ defaultSettings['typescript.verifiedDiagnostics'] = [
 ]
 defaultSettings['eslint.ignoreHashes'] = [textHash(workspaceFiles['/src/main.ts'])]
 await writeFile(defaultSettingsPath, `${JSON.stringify(defaultSettings, null, 2)}\n`)
+
+// Local settings replace exported defaults in the web runtime. Seed the fixed
+// demo settings before startup, including profiles with useOnLoadJson=false.
+const demoSettings = {
+  'application.useOnLoadJson': true,
+  'typescript.verifiedDiagnostics': defaultSettings['typescript.verifiedDiagnostics'],
+  'eslint.ignoreHashes': defaultSettings['eslint.ignoreHashes'],
+}
+const demoStartup = `try {
+  const settings = JSON.parse(localStorage.getItem('settings') || '{}')
+  Object.assign(settings, ${JSON.stringify(demoSettings)})
+  localStorage.setItem('settings', JSON.stringify(settings))
+} catch {
+  // Storage may be unavailable; exported defaults still configure the demo.
+}
+`
+await writeFile(join(root, 'dist', 'demo-startup.js'), demoStartup)
 
 for (const name of ['renderer-process', 'preview-sandbox-worker', 'preview-worker']) {
   await cp(new URL('./', import.meta.resolve(`@lvce-editor/${name}`)), join(root, 'dist', commitHash, 'packages', name, 'dist'), {
