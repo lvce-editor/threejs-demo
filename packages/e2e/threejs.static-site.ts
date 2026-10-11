@@ -234,6 +234,24 @@ try {
   await expect(previewCanvas).toBeVisible()
   await expectColor(previewCanvas, [50, 184, 255, 255])
   expect(navigationErrors(errors)).toEqual([])
+
+  for (let iteration = 0; iteration < 2; iteration++) {
+    await page.evaluate(() => {
+      const settings = JSON.parse(globalThis.localStorage.getItem('settings') || '{}')
+      settings['application.useOnLoadJson'] = false
+      globalThis.localStorage.setItem('settings', JSON.stringify(settings))
+    })
+    await page.reload()
+    await expect(sourceFirstLine).toBeVisible()
+    await expect(previewCanvas).toBeVisible()
+    await expectColor(previewCanvas, [50, 184, 255, 255])
+    await replaceSource(page, `${source}\nexport const typeMismatch: number = "invalid"\n`, false)
+    await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain("Type 'string' is not assignable to type 'number'")
+    await replaceSource(page, source.replace('#32b8ff', '#ff0000'))
+    await expectColor(previewCanvas, [255, 0, 0, 255])
+    await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toBe('[]')
+    expect(navigationErrors(errors)).toEqual([])
+  }
   expect(errors.filter((error) => error.includes('Failed to hash ESLint files in one batch'))).toEqual([])
 } catch (error) {
   const artifacts = join(staticRoot, '..', 'e2e-artifacts')
