@@ -32,6 +32,11 @@ jobs:
       - run: npm run e2e:headless
         env:
           PLAYWRIGHT_BROWSERS_PATH: 0
+      - name: Test Pages latency
+        run: npm run e2e:headless --workspace=packages/e2e
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: 0
+          THREEJS_DEMO_LATENCY_MS: 150
       - name: Upload browser failure evidence
         if: failure()
         uses: actions/upload-artifact@v4

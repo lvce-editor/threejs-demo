@@ -2,9 +2,12 @@ import { expect, type Locator, type Page } from '@playwright/test'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { extname, join, normalize, sep } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 import { chromium } from 'playwright'
 import { PNG } from 'pngjs'
 
+const responseDelay = Number(process.env.THREEJS_DEMO_LATENCY_MS || 0)
+if (!Number.isSafeInteger(responseDelay) || responseDelay < 0) throw new Error('THREEJS_DEMO_LATENCY_MS must be a nonnegative integer')
 const pathPrefix = '/threejs-demo'
 const staticRoot = join(import.meta.dirname, '..', '..', '.tmp', 'static')
 const contentTypes: Readonly<Record<string, string>> = {
@@ -35,6 +38,7 @@ const getFilePath = (requestUrl: string): string | undefined => {
 }
 
 const handleRequest = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
+  if (responseDelay) await delay(responseDelay)
   const filePath = getFilePath(request.url || '')
   if (!filePath) {
     response.writeHead(404)
@@ -45,6 +49,7 @@ const handleRequest = async (request: IncomingMessage, response: ServerResponse)
     const content = await readFile(filePath)
     response.writeHead(200, {
       'Content-Type': contentTypes[extname(filePath)] || 'application/octet-stream',
+      ...(responseDelay && { 'Cache-Control': 'public, max-age=600' }),
     })
     response.end(content)
   } catch {

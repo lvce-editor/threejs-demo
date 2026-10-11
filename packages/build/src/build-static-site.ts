@@ -1,6 +1,7 @@
 import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { build } from 'esbuild'
 import { root } from './root.ts'
 import { installExtension } from './installExtension.ts'
 
@@ -37,6 +38,19 @@ config.syntaxHighlightingWorkerUrl ||=
   config.workerUrls['develop.syntaxHighlightingWorkerPath'] || config.workerUrls['developer.syntaxHighlightingWorkerPath']
 if (!config.syntaxHighlightingWorkerUrl) throw new Error('Exported syntax highlighting worker URL not found')
 await writeFile(indexPath, index.replace(configMatch[0], `${configMatch[1]}${JSON.stringify(config)}${configMatch[3]}`))
+
+// This exported application always runs on the web, including eager module initialization.
+const rendererPath = join(root, 'dist', commitHash, 'packages', 'renderer-worker', 'dist', 'rendererWorkerMain.js')
+const renderer = await build({
+  bundle: true,
+  entryPoints: [rendererPath],
+  define: { PLATFORM: '1' },
+  format: 'esm',
+  minify: true,
+  platform: 'browser',
+  write: false,
+})
+await writeFile(rendererPath, renderer.outputFiles[0].contents)
 
 const defaultSettingsPath = join(root, 'dist', commitHash, 'config', 'defaultSettings.json')
 const defaultSettings = JSON.parse(await readFile(defaultSettingsPath, 'utf8'))
