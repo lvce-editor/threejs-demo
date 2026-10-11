@@ -79,7 +79,7 @@ const handleRequest = async (request: IncomingMessage, response: ServerResponse)
   }
   try {
     let content = await readFile(filePath)
-    if (filePath.endsWith('/preview-sandbox-worker/dist/previewSandBoxWorkerMain.js')) {
+    if (filePath === join(staticRoot, 'preview-sandbox-worker', 'dist', 'previewSandBoxWorkerMain.js')) {
       content = Buffer.concat([Buffer.from(sandboxInstrumentation), content])
     }
     response.writeHead(200, {
