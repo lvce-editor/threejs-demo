@@ -109,7 +109,9 @@ const expectImageChanged = async (canvas: Locator, before: Buffer): Promise<void
   const original = PNG.sync.read(before)
   await expect
     .poll(async () => {
-      const current = PNG.sync.read(await canvas.screenshot())
+      const bounds = await canvas.boundingBox()
+      if (!bounds) return 0
+      const current = PNG.sync.read(await canvas.page().screenshot({ clip: bounds }))
       let changedPixels = 0
       for (let offset = 0; offset < original.data.length; offset += 4) {
         if (
@@ -275,23 +277,25 @@ try {
         await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toBe('[]')
         expect(navigationErrors(errors)).toEqual([])
       }
-      const stableSource = source.replace('cube.rotation.y += 0.01', 'cube.rotation.y += 0')
+      const stableSource = source.replace('cube.rotation.y += 0.01', 'cube.rotation.y += 0').replace('#32b8ff', '#ffff00')
       await replaceSource(page, stableSource)
+      // A distinct color confirms the saved static scene has replaced the previous preview.
+      await expectColor(previewCanvas, [255, 255, 0, 255])
       await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toBe('[]')
       const previewBounds = await previewCanvas.boundingBox()
       if (!previewBounds) throw new Error('Preview canvas has no bounding box')
-      const dragStart = await previewCanvas.screenshot()
+      const dragStart = await page.screenshot({ clip: previewBounds })
       await page.mouse.move(previewBounds.x + previewBounds.width / 2, previewBounds.y + previewBounds.height / 2)
       await page.mouse.down()
       await page.mouse.move(previewBounds.x + previewBounds.width * 0.7, previewBounds.y + previewBounds.height / 2, { steps: 5 })
       await page.mouse.up()
       await expectImageChanged(previewCanvas, dragStart)
-      const zoomStart = await previewCanvas.screenshot()
+      const zoomStart = await page.screenshot({ clip: previewBounds })
       await page.mouse.move(previewBounds.x + previewBounds.width / 2, previewBounds.y + previewBounds.height / 2)
       await page.mouse.wheel(0, -300)
       await expectImageChanged(previewCanvas, zoomStart)
       expect(await page.evaluate(() => (globalThis as unknown as { scrollY: number }).scrollY)).toBe(0)
-      const panStart = await previewCanvas.screenshot()
+      const panStart = await page.screenshot({ clip: previewBounds })
       await page.mouse.move(previewBounds.x + previewBounds.width / 2, previewBounds.y + previewBounds.height / 2)
       await page.mouse.down({ button: 'right' })
       await page.mouse.move(previewBounds.x + previewBounds.width * 0.7, previewBounds.y + previewBounds.height * 0.7, { steps: 5 })
