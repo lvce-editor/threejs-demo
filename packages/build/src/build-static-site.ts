@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -35,10 +36,21 @@ const index = await readFile(indexPath, 'utf8')
 const configMatch = /(<script id="Config" type="application\/json">)(.*?)(<\/script>)/s.exec(index)
 if (!configMatch) throw new Error('Exported runtime configuration not found')
 const config = JSON.parse(configMatch[2])
+config.initialLayout = {
+  activityBarVisible: false,
+  statusBarVisible: false,
+  titleBarVisible: false,
+  sideBarVisible: false,
+  secondarySideBarVisible: false,
+  panelVisible: false,
+}
+config.staticFileIcons = { 'main.ts': `${config.assetDir}/extensions/builtin.vscode-icons/icons/file_type_typescript.svg` }
+config.previewOutputEnabled = false
 config.syntaxHighlightingWorkerUrl ||=
   config.workerUrls['develop.syntaxHighlightingWorkerPath'] || config.workerUrls['developer.syntaxHighlightingWorkerPath']
 if (!config.syntaxHighlightingWorkerUrl) throw new Error('Exported syntax highlighting worker URL not found')
-await writeFile(indexPath, index.replace(configMatch[0], `${configMatch[1]}${JSON.stringify(config)}${configMatch[3]}`))
+const configuredIndex = index.replace(configMatch[0], `${configMatch[1]}${JSON.stringify(config)}${configMatch[3]}`)
+await writeFile(indexPath, configuredIndex.replace('</head>', `<script src="/threejs-demo/demo-startup.js"></script>\n</head>`))
 
 // This exported application always runs on the web, including eager module initialization.
 const rendererPath = join(root, 'dist', commitHash, 'packages', 'renderer-worker', 'dist', 'rendererWorkerMain.js')
@@ -46,7 +58,7 @@ const renderer = await build({
   bundle: true,
   entryPoints: [rendererPath],
   define: { PLATFORM: '1' },
-  external: ['electron'],
+  external: ['electron', 'node:*'],
   format: 'esm',
   minify: true,
   platform: 'browser',
@@ -57,7 +69,37 @@ await writeFile(rendererPath, renderer.outputFiles[0].contents)
 const defaultSettingsPath = join(root, 'dist', commitHash, 'config', 'defaultSettings.json')
 const defaultSettings = JSON.parse(await readFile(defaultSettingsPath, 'utf8'))
 defaultSettings['application.useOnLoadJson'] = true
+const workspaceFiles = JSON.parse(await readFile(join(root, 'packages/extension/dist/workspace.json'), 'utf8'))
+const textHash = (text: string): string => createHash('sha256').update(text).digest('hex')
+// The scene type-check and generated fixed project dependencies validate this text.
+// Changed text/configuration resumes checking before the TypeScript worker is started.
+defaultSettings['typescript.verifiedDiagnostics'] = [
+  {
+    uri: 'memfs:///threejs/src/main.ts',
+    hash: textHash(workspaceFiles['/src/main.ts']),
+    configUri: 'memfs:///threejs/tsconfig.json',
+    configHash: textHash(workspaceFiles['/tsconfig.json']),
+  },
+]
+defaultSettings['eslint.ignoreHashes'] = [textHash(workspaceFiles['/src/main.ts'])]
 await writeFile(defaultSettingsPath, `${JSON.stringify(defaultSettings, null, 2)}\n`)
+
+// Local settings replace exported defaults in the web runtime. Seed the fixed
+// demo settings before startup, including profiles with useOnLoadJson=false.
+const demoSettings = {
+  'application.useOnLoadJson': true,
+  'typescript.verifiedDiagnostics': defaultSettings['typescript.verifiedDiagnostics'],
+  'eslint.ignoreHashes': defaultSettings['eslint.ignoreHashes'],
+}
+const demoStartup = `try {
+  const settings = JSON.parse(localStorage.getItem('settings') || '{}')
+  Object.assign(settings, ${JSON.stringify(demoSettings)})
+  localStorage.setItem('settings', JSON.stringify(settings))
+} catch {
+  // Storage may be unavailable; exported defaults still configure the demo.
+}
+`
+await writeFile(join(root, 'dist', 'demo-startup.js'), demoStartup)
 
 for (const name of ['renderer-process', 'preview-sandbox-worker', 'preview-worker']) {
   await cp(new URL('./', import.meta.resolve(`@lvce-editor/${name}`)), join(root, 'dist', commitHash, 'packages', name, 'dist'), {
@@ -68,7 +110,7 @@ for (const name of ['renderer-process', 'preview-sandbox-worker', 'preview-worke
 
 const extensionId = 'builtin.threejs-demo'
 await installExtension('eslint', '1.25.3', commitHash)
-await installExtension('language-features-typescript', '5.31.0', commitHash)
+await installExtension('language-features-typescript', '5.33.0', commitHash)
 const compilerPath = join(root, 'dist', commitHash, 'extensions', 'builtin.language-features-typescript', 'typescript', 'lib', 'typescript-esm.js')
 await writeFile(compilerPath, removeUnreachableTypeScriptCode(await readFile(compilerPath, 'utf8')))
 await cp(join(root, 'packages', 'extension', 'dist'), join(root, 'dist', commitHash, 'extensions', extensionId, 'dist'), {

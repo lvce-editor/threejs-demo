@@ -15,7 +15,7 @@
     "e2e": "npm run build && npm run e2e --workspace=packages/e2e",
     "e2e:headless": "npm run build && npm run e2e:headless --workspace=packages/e2e",
     "format": "prettier --write .",
-    "lint": "eslint . && prettier --check .",
+    "lint": "eslint . && prettier --check . && knip --no-config-hints",
     "test": "npm test --workspaces --if-present",
     "type-check": "tsc -b"
   },
@@ -31,6 +31,7 @@
     "typescript": "^6.0.3",
     "@types/three": "^0.186.0",
     "esbuild-wasm": "^0.28.2",
+    "knip": "^6.40.0",
     "typescript-eslint": "^8.71.1",
     "@typescript-eslint/eslint-plugin": "^8.71.1"
   },

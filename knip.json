@@ -1,0 +1,25 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "workspaces": {
+    ".": {
+      "project": ["*.js"],
+      "ignoreDependencies": ["typescript-eslint", "@typescript-eslint/eslint-plugin"]
+    },
+    "packages/build": {
+      "project": ["src/**/*.ts"],
+      "ignoreDependencies": ["@lvce-editor/preview-sandbox-worker", "@lvce-editor/preview-worker", "@lvce-editor/renderer-process"]
+    },
+    "packages/e2e": {
+      "entry": ["threejs.static-site.ts"],
+      "project": ["*.ts"]
+    },
+    "packages/extension": {
+      "entry": ["src/extensionMain.ts", "test/**/*.test.ts"],
+      "project": ["src/**/*.ts", "test/**/*.ts"]
+    },
+    "packages/server": {
+      "project": [],
+      "ignoreDependencies": ["@lvce-editor/server"]
+    }
+  }
+}

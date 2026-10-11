@@ -40,9 +40,17 @@ const files: Record<string, string> = {
     dependencies: { three: JSON.parse(await readFile(join(root, 'node_modules/three/package.json'), 'utf8')).version },
     devDependencies: { '@types/three': JSON.parse(await readFile(join(root, 'node_modules/@types/three/package.json'), 'utf8')).version },
   }),
-  '/tsconfig.json': JSON.stringify({
-    compilerOptions: { target: 'es2022', module: 'esnext', moduleResolution: 'bundler', strict: true, skipLibCheck: true, noEmit: true },
-    include: ['src'],
-  }),
+  '/node_modules/three/examples/jsm/controls/OrbitControls.js': await readFile(
+    join(root, 'node_modules/three/examples/jsm/controls/OrbitControls.js'),
+    'utf8',
+  ),
+  '/tsconfig.json': JSON.stringify(
+    {
+      compilerOptions: { target: 'es2022', module: 'esnext', moduleResolution: 'bundler', strict: true, skipLibCheck: true, noEmit: true },
+      include: ['src'],
+    },
+    null,
+    2,
+  ),
 }
 await writeFile(join(outputDirectory, 'workspace.json'), `${JSON.stringify(files)}\n`)

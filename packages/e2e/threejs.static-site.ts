@@ -7,6 +7,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { chromium, firefox } from 'playwright'
 import { PNG } from 'pngjs'
 import { verifyFirefoxCompilerWarnings } from './firefoxCompilerWarnings.ts'
+import { measureStartup } from './startupMetrics.ts'
 
 const responseDelay = Number(process.env.THREEJS_DEMO_LATENCY_MS || 0)
 if (!Number.isSafeInteger(responseDelay) || responseDelay < 0) throw new Error('THREEJS_DEMO_LATENCY_MS must be a nonnegative integer')
@@ -118,6 +119,26 @@ const expectAnimation = async (canvas: Locator): Promise<void> => {
     .toBe(false)
 }
 
+const expectImageChanged = async (canvas: Locator, before: Buffer): Promise<void> => {
+  const original = PNG.sync.read(before)
+  await expect
+    .poll(async () => {
+      const current = PNG.sync.read(await canvas.screenshot())
+      let changedPixels = 0
+      for (let offset = 0; offset < original.data.length; offset += 4) {
+        if (
+          Math.abs(original.data[offset] - current.data[offset]) > 12 ||
+          Math.abs(original.data[offset + 1] - current.data[offset + 1]) > 12 ||
+          Math.abs(original.data[offset + 2] - current.data[offset + 2]) > 12
+        ) {
+          changedPixels++
+        }
+      }
+      return changedPixels
+    })
+    .toBeGreaterThan(100)
+}
+
 const replaceSource = async (page: Page, source: string, save: boolean = true): Promise<void> => {
   await page.locator('.Editor textarea').focus()
   await page.keyboard.press('Control+a')
@@ -134,14 +155,23 @@ const replaceSource = async (page: Page, source: string, save: boolean = true): 
   if (save) await page.keyboard.press('Control+s')
 }
 
-const diagnostics = async (page: Page): Promise<string> => {
+const rendererCommand = async (page: Page, command: string, args: unknown[] = []): Promise<unknown> => {
   const worker = page.workers().find((worker) => worker.url().includes('/renderer-worker/'))
   if (!worker) throw new Error('Renderer worker is not running')
   const entry = worker.url().replace('/renderer-worker/dist/rendererWorkerMain.js', '/renderer-process/dist/rendererProcessMain.js')
-  return page.evaluate(async (entry) => {
-    const renderer = await import(entry)
-    return JSON.stringify(await renderer.executeCommand('GetActiveEditor.getDiagnostics'))
-  }, entry)
+  return page.evaluate(
+    async ({ args, command, entry }) => {
+      const renderer = await import(entry)
+      return renderer.executeCommand(command, ...args)
+    },
+    { args, command, entry },
+  )
+}
+
+const diagnostics = async (page: Page): Promise<string> => JSON.stringify(await rendererCommand(page, 'GetActiveEditor.getDiagnostics'))
+
+const navigationErrors = (errors: readonly string[]): string[] => {
+  return errors.filter((error) => error.includes('Cannot navigate to child: child not found at index'))
 }
 
 const server = createServer((request, response) => {
@@ -174,7 +204,11 @@ try {
   page.on('requestfailed', (request) => {
     errors.push(`${request.failure()?.errorText} ${request.url()}`)
   })
+  const forbiddenWorkers: string[] = []
   page.on('worker', (worker) => {
+    if (/\/(?:panel-worker|icon-theme-worker|status-bar-worker|source-control-worker|output-view|activity-bar-worker)\//.test(worker.url())) {
+      forbiddenWorkers.push(worker.url())
+    }
     errors.push(`worker ${worker.url()}`)
   })
   const url = process.env.THREEJS_DEMO_URL || `http://127.0.0.1:${address.port}${pathPrefix}/`
@@ -183,6 +217,30 @@ try {
   const previewCanvas = page.locator('.Viewlet.Preview #scene')
   const errorView = page.locator('.ViewletErrorMessage')
 
+  await page.addInitScript(() => {
+    const startup = { visibleBars: [] as string[] }
+    Object.defineProperty(globalThis, '__threejsStartup', { value: startup })
+    const observe = (): void => {
+      for (const selector of ['.ActivityBar', '.StatusBar']) {
+        const element = document.querySelector(selector)
+        if (!element) continue
+        const { height, width } = element.getBoundingClientRect()
+        const style = getComputedStyle(element)
+        if (width > 0 && height > 0 && style.visibility !== 'hidden' && style.display !== 'none') startup.visibleBars.push(selector)
+      }
+      requestAnimationFrame(observe)
+    }
+    requestAnimationFrame(observe)
+  })
+  const assertLeanStartup = async (): Promise<void> => {
+    expect(forbiddenWorkers).toEqual([])
+    expect(page.workers().filter((worker) => worker.url().endsWith('/typescriptWorkerMain.js'))).toHaveLength(0)
+    expect(await page.evaluate(() => Object.getOwnPropertyDescriptor(globalThis, '__threejsStartup')?.value.visibleBars)).toEqual([])
+    const icon = page.getByRole('tab', { exact: true, name: 'main.ts Close' }).locator('img.TabIcon')
+    await expect(icon).toBeVisible()
+    await expect(icon).toHaveAttribute('src', /\/file_type_typescript\.svg$/)
+    await expect.poll(() => icon.evaluate((element: HTMLImageElement) => element.complete && element.naturalWidth > 0)).toBe(true)
+  }
   await page.goto(url)
   try {
     await expect(sourceFirstLine).toBeVisible()
@@ -223,6 +281,8 @@ try {
   await expect(errorView).toHaveCount(0)
   await expectColor(previewCanvas, [50, 184, 255, 255])
   await executeCommand('Layout.hidePanel')
+  const source = await readFile(join(import.meta.dirname, '../../src/main.ts'), 'utf8')
+  expect(navigationErrors(errors)).toEqual([])
   const resourceCounts = async (): Promise<{ contexts: number; timers: number }> => {
     const worker = page.workers().find((worker) => worker.url().includes('/preview-sandbox-worker/'))
     if (!worker) throw new Error('Sandbox worker is missing')
@@ -236,6 +296,10 @@ try {
     return counts.contexts
   }
   await expect.poll(contextsCount).toBe(1)
+  if (process.env.THREEJS_DEMO_METRICS) {
+    await writeFile(process.env.THREEJS_DEMO_METRICS, JSON.stringify(await measureStartup(browser), null, 2))
+  }
+  await assertLeanStartup()
   const initialResources = await resourceCounts()
   const initialTimers = initialResources.timers
   // Closing the final preview must release its context while the shared worker survives.
@@ -246,7 +310,6 @@ try {
   await executeCommand('Layout.showPreview', 'memfs:///threejs/index.html')
   await expectColor(previewCanvas, [50, 184, 255, 255])
   await expect.poll(contextsCount).toBe(1)
-  const source = await readFile(join(import.meta.dirname, '../../src/main.ts'), 'utf8')
   await replaceSource(page, `${source}\nexport const typeMismatch: number = "invalid"\nexport type Unsafe = any\n`, false)
   await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain("Type 'string' is not assignable to type 'number'")
   await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain('Unexpected any')
@@ -291,6 +354,67 @@ try {
   expect(errors.filter((error) => error.includes('Failed to hash ESLint files in one batch'))).toEqual([])
   expect(errors.filter((error) => /(?:undefined.*send|send.*undefined)/.test(error))).toEqual([])
   await expect(errorView).toHaveCount(0)
+  expect(navigationErrors(errors)).toEqual([])
+  for (let iteration = 0; iteration < 2; iteration++) {
+    await page.evaluate(() => {
+      const settings = JSON.parse(globalThis.localStorage.getItem('settings') || '{}')
+      settings['application.useOnLoadJson'] = false
+      globalThis.localStorage.setItem('settings', JSON.stringify(settings))
+    })
+    await page.reload()
+    await expect(sourceFirstLine).toBeVisible()
+    await expect(previewCanvas).toBeVisible()
+    await expectColor(previewCanvas, [50, 184, 255, 255])
+    await replaceSource(page, `${source}\nexport const typeMismatch: number = "invalid"\n`, false)
+    await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain("Type 'string' is not assignable to type 'number'")
+    await replaceSource(page, source.replace('#32b8ff', '#ff0000'))
+    await expectColor(previewCanvas, [255, 0, 0, 255])
+    await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toBe('[]')
+    expect(navigationErrors(errors)).toEqual([])
+  }
+  const stableSource = source.replace('cube.rotation.y += 0.01', 'cube.rotation.y += 0')
+  await replaceSource(page, stableSource)
+  await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toBe('[]')
+  const previewBounds = await previewCanvas.boundingBox()
+  if (!previewBounds) throw new Error('Preview canvas has no bounding box')
+  const dragStart = await previewCanvas.screenshot()
+  await page.mouse.move(previewBounds.x + previewBounds.width / 2, previewBounds.y + previewBounds.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(previewBounds.x + previewBounds.width * 0.7, previewBounds.y + previewBounds.height / 2, { steps: 5 })
+  await page.mouse.up()
+  await expectImageChanged(previewCanvas, dragStart)
+  const zoomStart = await previewCanvas.screenshot()
+  await page.mouse.move(previewBounds.x + previewBounds.width / 2, previewBounds.y + previewBounds.height / 2)
+  await page.mouse.wheel(0, -300)
+  await expectImageChanged(previewCanvas, zoomStart)
+  expect(await page.evaluate(() => (globalThis as unknown as { scrollY: number }).scrollY)).toBe(0)
+  const panStart = await previewCanvas.screenshot()
+  await page.mouse.move(previewBounds.x + previewBounds.width / 2, previewBounds.y + previewBounds.height / 2)
+  await page.mouse.down({ button: 'right' })
+  await page.mouse.move(previewBounds.x + previewBounds.width * 0.7, previewBounds.y + previewBounds.height * 0.7, { steps: 5 })
+  await page.mouse.up({ button: 'right' })
+  await expectImageChanged(previewCanvas, panStart)
+  expect(errors.filter((error) => error.includes('setPointerCapture is not a function'))).toEqual([])
+  expect(errors.filter((error) => error.includes('Failed to hash ESLint files in one batch'))).toEqual([])
+  await page.reload()
+  await expect(sourceFirstLine).toBeVisible()
+  await expect(previewCanvas).toBeVisible()
+  await expectColor(previewCanvas, [50, 184, 255, 255])
+  await assertLeanStartup()
+  // Request completions without editing the newly reloaded, verified document.
+  await page.locator('.Editor textarea').focus()
+  const completionRow = source.split('\n').findIndex((line) => line.startsWith('renderer.setSize'))
+  if (completionRow === -1) throw new Error('Renderer completion location is missing')
+  await rendererCommand(page, 'GetActiveEditor.setSelections', [[completionRow, 9, completionRow, 9]])
+  await page.keyboard.press('Control+Space')
+  const completionItem = page.locator('.EditorCompletionItem').filter({ hasText: 'autoClear' }).first()
+  await expect(completionItem).toBeVisible({ timeout: 30_000 })
+  expect(page.workers().filter((worker) => worker.url().endsWith('/typescriptWorkerMain.js'))).toHaveLength(1)
+  await page.keyboard.press('Escape')
+  await page.setViewportSize({ height: 700, width: 1000 })
+  await expect(previewCanvas).toBeVisible()
+  await expectColor(previewCanvas, [50, 184, 255, 255])
+  expect(forbiddenWorkers).toEqual([])
 } catch (error) {
   const artifacts = join(staticRoot, '..', 'e2e-artifacts')
   await mkdir(artifacts, { recursive: true })
