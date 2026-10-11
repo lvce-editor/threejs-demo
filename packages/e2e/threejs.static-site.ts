@@ -235,7 +235,11 @@ if (!address || typeof address === 'string') {
 }
 
 const browserType = process.env.THREEJS_DEMO_BROWSER === 'firefox' ? firefox : chromium
-const browser = await browserType.launch({ headless: true })
+const browser = await browserType.launch({
+  headless: true,
+  // GPU-less CI runners otherwise reject WebGL2 with AllowWebgl2:false.
+  ...(process.env.CI && browserType === firefox && { firefoxUserPrefs: { 'webgl.force-enabled': true } }),
+})
 const errors: string[] = []
 try {
   const page = await browser.newPage()
