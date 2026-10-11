@@ -27,6 +27,7 @@ await esbuild.build({
   format: 'esm',
   platform: 'browser',
   outfile: join(outputDirectory, 'three.js'),
+  minify: true,
 })
 await cp(join(dirname(require.resolve('esbuild-wasm')), '..', 'esbuild.wasm'), join(outputDirectory, 'esbuild.wasm'))
 
@@ -83,8 +84,15 @@ const initialScene = await esbuild.build({
   platform: 'browser',
   target: 'es2022',
   treeShaking: true,
+  minify: true,
   write: false,
 })
 files['/dist/main.js'] = initialScene.outputFiles[0].text
 files['/dist/main.source.ts'] = files['/src/main.ts']
 await writeFile(join(outputDirectory, 'workspace.json'), `${JSON.stringify(files)}\n`)
+const previewFiles = Object.fromEntries(
+  Object.entries(files).filter(
+    ([path]) => !path.startsWith('/node_modules/') || path === '/node_modules/three/examples/jsm/controls/OrbitControls.js',
+  ),
+)
+await writeFile(join(outputDirectory, 'workspace-preview.json'), `${JSON.stringify(previewFiles)}\n`)

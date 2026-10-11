@@ -140,7 +140,7 @@ const demoStartup = `try {
 `
 await writeFile(join(root, 'dist', 'demo-startup.js'), demoStartup)
 
-for (const name of ['renderer-process', 'preview-sandbox-worker', 'preview-worker']) {
+for (const name of ['renderer-process', 'preview-sandbox-worker', 'preview-worker', 'extension-management-worker']) {
   await cp(new URL('./', import.meta.resolve(`@lvce-editor/${name}`)), join(root, 'dist', commitHash, 'packages', name, 'dist'), {
     force: true,
     recursive: true,
@@ -149,7 +149,35 @@ for (const name of ['renderer-process', 'preview-sandbox-worker', 'preview-worke
 
 const extensionId = 'builtin.threejs-demo'
 await installExtension('eslint', '1.25.3', commitHash)
+const eslintExtensionPath = join(root, 'dist', commitHash, 'extensions', 'builtin.eslint', 'dist', 'eslintMain.js')
+const eslintExtension = await readFile(eslintExtensionPath, 'utf8')
+// The verified initial scene returns before this hook; edited text needs all tooling.
+const lintEditedText = "    const {\n      text\n    } = textDocument;\n    const filePath = textDocument.uri ?? 'file.js';"
+if (!eslintExtension.includes(lintEditedText) || !eslintExtension.includes('const executeCommand$1 = async'))
+  throw new Error('ESLint edited document hook not found')
+await writeFile(
+  eslintExtensionPath,
+  eslintExtension.replace(lintEditedText, `    await executeCommand$1('threejs.prepareLanguageFeatures');\n${lintEditedText}`),
+)
 await installExtension('language-features-typescript', '5.33.0', commitHash)
+// Early completion requests must not snapshot a partially installed virtual project.
+const languageExtensionPath = join(
+  root,
+  'dist',
+  commitHash,
+  'extensions',
+  'builtin.language-features-typescript',
+  'dist',
+  'languageFeaturesTypeScriptMain.js',
+)
+const languageExtension = await readFile(languageExtensionPath, 'utf8')
+const launchWorker = 'const launchTypeScriptWorker = async () => {'
+if (!languageExtension.includes(launchWorker) || !languageExtension.includes('const executeCommand$1 = async'))
+  throw new Error('TypeScript worker startup hook not found')
+await writeFile(
+  languageExtensionPath,
+  languageExtension.replace(launchWorker, `${launchWorker}\n  await executeCommand$1('threejs.prepareLanguageFeatures');`),
+)
 const compilerPath = join(root, 'dist', commitHash, 'extensions', 'builtin.language-features-typescript', 'typescript', 'lib', 'typescript-esm.js')
 await writeFile(compilerPath, removeUnreachableTypeScriptCode(await readFile(compilerPath, 'utf8')))
 await cp(join(root, 'packages', 'extension', 'dist'), join(root, 'dist', commitHash, 'extensions', extensionId, 'dist'), {

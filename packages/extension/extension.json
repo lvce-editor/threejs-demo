@@ -6,9 +6,10 @@
   "contentSecurityPolicy": ["default-src 'none'", "script-src 'self' 'unsafe-eval'", "connect-src 'self'"],
   "isolated": true,
   "categories": ["Other"],
-  "activation": ["onCommand:threejs.initializeWorkspace", "onCommand:threejs.openDemo"],
+  "activation": ["onCommand:threejs.initializeWorkspace", "onCommand:threejs.openDemo", "onCommand:threejs.prepareLanguageFeatures"],
   "commands": [
     { "id": "threejs.initializeWorkspace", "label": "Three.js: Initialize Workspace" },
+    { "id": "threejs.prepareLanguageFeatures", "label": "Three.js: Prepare Language Features" },
     {
       "id": "threejs.openDemo",
       "label": "Three.js: Open Demo"

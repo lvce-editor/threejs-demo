@@ -158,11 +158,9 @@ const expectImageChanged = async (canvas: Locator, before: Buffer): Promise<void
 const replaceSource = async (page: Page, source: string, save: boolean = true): Promise<void> => {
   await page.locator('.Editor textarea').focus()
   await page.keyboard.press('Control+a')
-  // Firefox's insertText automation emits insertCompositionText rather than a
-  // committed text insertion. Send the same text event through the DOM in both browsers.
-  await page.locator('.Editor textarea').evaluate((element, text) => {
-    element.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, data: text, inputType: 'insertText' }))
-  }, source)
+  // Use the editor's multiline paste path; insertText events only represent one line.
+  const editorId = await rendererCommand(page, 'GetActiveEditor.getActiveEditorId')
+  await rendererCommand(page, 'Viewlet.executeViewletCommand', [editorId, 'pasteText', source])
   await expect.poll(() => rendererCommand(page, 'GetActiveEditor.getTextDocument')).toEqual({ text: source, uri: 'memfs:///threejs/src/main.ts' })
   if (save) await page.keyboard.press('Control+s')
 }
@@ -230,6 +228,7 @@ try {
       if (browserType === chromium) await verifyFirefoxCompilerWarnings(url)
       const sourceFirstLine = page.locator('.EditorRow', { hasText: "import * as THREE from 'three'" })
       const previewCanvas = page.locator('.Viewlet.Preview #scene')
+      const typeMismatchRow = page.locator('.EditorRow', { hasText: 'export const typeMismatch:' })
 
       await page.addInitScript(() => {
         const startup = { visibleBars: [] as string[] }
@@ -291,6 +290,7 @@ try {
       const initialResources = await resourceCounts()
       const initialTimers = initialResources.timers
       await replaceSource(page, `${source}\nexport const typeMismatch: number = "invalid"\nexport type Unsafe = any\nPromise.resolve()\n`, false)
+      await expect(typeMismatchRow).toBeVisible()
       await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain("Type 'string' is not assignable to type 'number'")
       await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain('Unexpected any')
       await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain('Promises must be awaited')
