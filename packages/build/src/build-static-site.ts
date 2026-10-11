@@ -65,7 +65,7 @@ for (const name of ['renderer-process', 'preview-sandbox-worker', 'preview-worke
 }
 
 const extensionId = 'builtin.threejs-demo'
-await installExtension('eslint', '1.25.2', commitHash)
+await installExtension('eslint', '1.25.3', commitHash)
 await installExtension('language-features-typescript', '5.31.0', commitHash)
 await cp(join(root, 'packages', 'extension', 'dist'), join(root, 'dist', commitHash, 'extensions', extensionId, 'dist'), {
   force: true,
