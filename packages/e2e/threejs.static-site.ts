@@ -27,6 +27,10 @@ const instrumentTypeScript = (source: string, worker: boolean): string => {
         ['const getDiagnostics2 = async (textDocument, trace) => {', "globalThis.__threejsTsStage('diagnostics-start', textDocument.text.length);"],
         ["const tsResult = measure(actualTrace, 'semanticDiagnostics',", "globalThis.__threejsTsStage('semantic-start');"],
         ['return diagnostics;\n  } catch (error) {', "globalThis.__threejsTsStage('diagnostics-end', diagnostics.length);"],
+        [
+          'actualTrace.totalDurationMs = performance.now() - start;',
+          "globalThis.__threejsTsStage('diagnostics-performance', { totalDurationMs: actualTrace.totalDurationMs, stages: actualTrace.stages, syncRpc: actualTrace.syncRpc, fileCache: actualTrace.fileCache, loadedFiles: actualTrace.loadedFiles?.length });",
+        ],
       ]
     : [
         ['const provideDiagnostics = async textDocument => {', "globalThis.__threejsTsStage('provider-start', textDocument.text.length);"],
@@ -45,7 +49,7 @@ const instrumentTypeScript = (source: string, worker: boolean): string => {
     `globalThis.__threejsTsTrace = { entries: [], dropped: 0 };
     globalThis.__threejsTsStage = (stage, detail) => {
       const trace = globalThis.__threejsTsTrace;
-      if (trace.entries.length >= 128) { trace.dropped++; return; }
+      if (trace.entries.length >= 128) { trace.dropped++; ${worker ? 'return;' : 'trace.entries.shift();'} }
       const entry = { stage, detail, time: Date.now() };
       trace.entries.push(entry);
       ${worker ? "console.log('[threejs-typescript]' + JSON.stringify(entry));" : ''}
