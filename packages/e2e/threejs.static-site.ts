@@ -15,6 +15,15 @@ const pathPrefix = '/threejs-demo'
 const staticRoot = join(import.meta.dirname, '..', '..', '.tmp', 'static')
 const sandboxWorkerPathSuffix = join('preview-sandbox-worker', 'dist', 'previewSandBoxWorkerMain.js')
 const rendererProcessPathSuffix = join('renderer-process', 'dist', 'rendererProcessMain.js')
+const extensionPathSuffix = join('builtin.threejs-demo', 'dist', 'extensionMain.js')
+const pipelineInstrumentation = `
+  globalThis.__threejsPipelineTrace = []
+  globalThis.__threejsTraceStage = (stage, revision) => {
+    const trace = globalThis.__threejsPipelineTrace
+    trace.push({ stage, revision, time: Date.now() })
+    if (trace.length > 128) trace.shift()
+  }
+`
 const contentTypes: Readonly<Record<string, string>> = {
   '.css': 'text/css',
   '.html': 'text/html',
@@ -24,7 +33,7 @@ const contentTypes: Readonly<Record<string, string>> = {
   '.woff2': 'font/woff2',
 }
 const sandboxInstrumentation = `{
-  globalThis.__threejsFrameTrace = { ticks: 0, paints: 0, captures: 0, sends: 0, acks: 0 }
+  globalThis.__threejsFrameTrace = { ticks: 0, paints: 0, captures: 0, sends: 0, acks: 0, sinks: [] }
   const timers = new Set()
   const contexts = new Set()
   const nativeSetTimeout = globalThis.setTimeout
@@ -73,6 +82,57 @@ const getFilePath = (requestUrl: string): string | undefined => {
   return filePath
 }
 
+const instrumentSandbox = (source: string): string => {
+  const create = 'const createCanvasFrameSink = (canvas, port) => {'
+  const dispose = 'dispose: () => {\n      if (disposed) return;'
+  if (!source.includes(create) || !source.includes(dispose)) throw new Error('Sandbox lifecycle trace seam is missing')
+  source = source.replace(
+    create,
+    () => `${create}
+      const frameTrace = { created: Date.now(), paints: 0, captures: 0, sends: 0, acks: 0 }
+      const sinks = globalThis.__threejsFrameTrace.sinks
+      sinks.push(frameTrace)
+      if (sinks.length > 128) sinks.shift()
+    `,
+  )
+  source = source.replace(dispose, () => `${dispose}\nframeTrace.disposed = Date.now();`)
+  const dispatch = 'const dispatchEvent = (element, event) => {'
+  const frameSeams = [
+    ['const tick = () => {', 'ticks'],
+    ['const result = paint(...args);', 'paints'],
+    ['send(canvas.transferToImageBitmap());', 'captures'],
+    ['inFlight = true;', 'sends'],
+    ['inFlight = false;\n    if (pending)', 'acks'],
+  ]
+  for (const [seam, counter] of frameSeams) {
+    if (!source.includes(seam)) throw new Error(`Sandbox frame trace seam is missing: ${counter}`)
+    const localTrace = counter === 'ticks' ? '' : `frameTrace.${counter}++; frameTrace.last_${counter} = Date.now();`
+    const trace = `globalThis.__threejsFrameTrace.${counter}++; globalThis.__threejsFrameTrace.last_${counter} = Date.now(); ${localTrace}`
+    source = source.replace(seam, () => (counter === 'ticks' ? `${seam}\n${trace}` : `${trace}\n${seam}`))
+  }
+  const scriptSeams = [
+    ['const functionNames = getTopLevelFunctionNames(scriptContent);', 'script-scan-start', false],
+    ['const suffix = names.map', 'script-scan-end', false],
+    ['fn.call(window, window, document, runtimeConsole);\n    } catch', 'script-execution-end', true],
+  ] as const
+  for (const [seam, stage, after] of scriptSeams) {
+    if (!source.includes(seam)) throw new Error(`Sandbox script trace seam is missing: ${stage}`)
+    const trace = `globalThis.__threejsTraceStage('${stage}', uid);`
+    source = source.replace(seam, () => (after ? seam.replace(';\n', () => `; ${trace}\n`) : `${trace}\n${seam}`))
+  }
+  if (!source.includes(dispatch)) throw new Error('Sandbox pointer trace seam is missing')
+  return source.replace(
+    dispatch,
+    () => `${dispatch}
+  if (/^(pointer|wheel)/.test(event.type)) {
+    const trace = globalThis.__threejsPointerTrace ||= []
+    trace.push({ type: event.type, target: element.id, x: event.clientX, y: event.clientY, button: event.button, buttons: event.buttons, time: Date.now() })
+    if (trace.length > 128) trace.shift()
+  }
+`,
+  )
+}
+
 const handleRequest = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
   if (responseDelay) await delay(responseDelay)
   const filePath = getFilePath(request.url || '')
@@ -84,46 +144,54 @@ const handleRequest = async (request: IncomingMessage, response: ServerResponse)
   try {
     let content = await readFile(filePath)
     if (filePath.endsWith(`${sep}${sandboxWorkerPathSuffix}`)) {
-      const dispatch = 'const dispatchEvent = (element, event) => {'
+      content = Buffer.from(instrumentSandbox(content.toString()))
+      content = Buffer.concat([Buffer.from(pipelineInstrumentation + sandboxInstrumentation), content])
+    }
+    if (filePath.endsWith(`${sep}${extensionPathSuffix}`)) {
       let source = content.toString()
-      const frameSeams = [
-        ['const tick = () => {', 'ticks'],
-        ['const result = paint(...args);', 'paints'],
-        ['send(canvas.transferToImageBitmap());', 'captures'],
-        ['inFlight = true;', 'sends'],
-        ['inFlight = false;\n    if (pending)', 'acks'],
-      ]
-      for (const [seam, counter] of frameSeams) {
-        if (!source.includes(seam)) throw new Error(`Sandbox frame trace seam is missing: ${counter}`)
-        const trace = `globalThis.__threejsFrameTrace.${counter}++; globalThis.__threejsFrameTrace.last_${counter} = Date.now();`
-        source = source.replace(seam, () => (counter === 'ticks' ? `${seam}\n${trace}` : `${trace}\n${seam}`))
-      }
-      if (!source.includes(dispatch)) throw new Error('Sandbox pointer trace seam is missing')
-      content = Buffer.from(
-        source.replace(
-          dispatch,
-          () => `${dispatch}
-        if (/^(pointer|wheel)/.test(event.type)) {
-          const trace = globalThis.__threejsPointerTrace ||= []
-          trace.push({ type: event.type, target: element.id, x: event.clientX, y: event.clientY, button: event.button, buttons: event.buttons, time: Date.now() })
-          if (trace.length > 128) trace.shift()
-        }
-      `,
-        ),
+      const buildSeam = 'const code = await build();'
+      const publishSeam = 'if (revision === requested) await publish(code);'
+      if (!source.includes(buildSeam) || !source.includes(publishSeam)) throw new Error('Compiler pipeline trace seam is missing')
+      source = source.replace(
+        buildSeam,
+        () => `globalThis.__threejsTraceStage('build-start', revision); ${buildSeam} globalThis.__threejsTraceStage('build-end', revision);`,
       )
-      content = Buffer.concat([Buffer.from(sandboxInstrumentation), content])
+      source = source.replace(
+        publishSeam,
+        () => `if (revision === requested) {
+          globalThis.__threejsTraceStage('publish-start', revision);
+          await publish(code);
+          globalThis.__threejsTraceStage('publish-end', revision);
+        }`,
+      )
+      content = Buffer.from(pipelineInstrumentation + source)
     }
     if (filePath.endsWith(`${sep}${rendererProcessPathSuffix}`)) {
+      let source = content.toString()
+      const create = 'const createCanvasPresentation = (canvas, onDispose) => {'
+      const dispose = 'port1.close();\n    onDispose();'
+      if (!source.includes(create) || !source.includes(dispose)) throw new Error('Native lifecycle trace seam is missing')
       const seam = 'context.transferFromImageBitmap(bitmap);'
-      const source = content.toString()
+      source = source.replace(
+        create,
+        () => `${create}
+          const frameTrace = { created: Date.now(), id: canvas.dataset.id, frames: 0 }
+          const trace = globalThis.__threejsPresentationTrace ||= { frames: 0, sinks: [] }
+          trace.sinks.push(frameTrace)
+          if (trace.sinks.length > 128) trace.sinks.shift()
+        `,
+      )
+      source = source.replace(dispose, () => `frameTrace.disposed = Date.now(); ${dispose}`)
       if (!source.includes(seam)) throw new Error('Native presentation trace seam is missing')
       content = Buffer.from(
         source.replace(
           seam,
           () => `${seam}
-            const trace = globalThis.__threejsPresentationTrace ||= { frames: 0 }
+            const trace = globalThis.__threejsPresentationTrace
             trace.frames++
             trace.last = Date.now()
+            frameTrace.frames++
+            frameTrace.last = Date.now()
           `,
         ),
       )
@@ -554,6 +622,12 @@ try {
   const page = browser.contexts()[0]?.pages()[0]
   if (page) {
     const pointers = {
+      extension: await Promise.all(
+        page
+          .workers()
+          .filter((worker) => worker.url().includes('/builtin.threejs-demo/'))
+          .map((worker) => worker.evaluate(() => Object.getOwnPropertyDescriptor(globalThis, '__threejsPipelineTrace')?.value)),
+      ),
       native: await page.evaluate(() => Object.getOwnPropertyDescriptor(globalThis, '__threejsPointerTrace')?.value),
       presentation: await page.evaluate(() => Object.getOwnPropertyDescriptor(globalThis, '__threejsPresentationTrace')?.value),
       sandbox: await Promise.all(
@@ -565,6 +639,7 @@ try {
               const resources = Object.getOwnPropertyDescriptor(globalThis, '__threejsTestResources')?.value
               return {
                 frames: Object.getOwnPropertyDescriptor(globalThis, '__threejsFrameTrace')?.value,
+                pipeline: Object.getOwnPropertyDescriptor(globalThis, '__threejsPipelineTrace')?.value,
                 pointers: Object.getOwnPropertyDescriptor(globalThis, '__threejsPointerTrace')?.value,
                 resources: { contexts: resources?.contexts.size, timers: resources?.timers.size },
                 time: Date.now(),
