@@ -1,4 +1,4 @@
-import { cp, readFile, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { root } from './root.ts'
@@ -9,6 +9,8 @@ const sharedProcessUrl = pathToFileURL(sharedProcessPath).toString()
 const sharedProcess = await import(sharedProcessUrl)
 
 process.env.PATH_PREFIX = '/threejs-demo'
+// The exporter requires a test source directory, including in a fresh checkout.
+await mkdir(join(root, 'packages', 'e2e', 'src'), { recursive: true })
 const { commitHash } = await sharedProcess.exportStatic({
   extensionPath: 'packages/extension',
   onLoadCommands: [
