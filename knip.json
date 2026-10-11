@@ -3,7 +3,7 @@
   "workspaces": {
     ".": {
       "project": ["*.js"],
-      "ignoreDependencies": ["typescript-eslint"]
+      "ignoreDependencies": ["typescript-eslint", "@typescript-eslint/eslint-plugin"]
     },
     "packages/build": {
       "project": ["src/**/*.ts"],

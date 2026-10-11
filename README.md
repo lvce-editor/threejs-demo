@@ -19,16 +19,17 @@ npm run build
 npm test
 npm run type-check
 npm run lint
-npx playwright install chromium
+npx playwright install chromium firefox
 npm run e2e:headless
 ```
 
 The build exports `.tmp/static` under the `/threejs-demo` URL prefix. GitHub
 Actions validates pull requests and publishes merged `main` to GitHub Pages.
-The scene compiles entirely in the browser; it needs no development server.
+The site build precompiles the initial scene and verifies its inputs before using
+it. Edits compile in the browser with a reusable esbuild context; the demo needs
+no development server.
 
-To run the same acceptance tests against a deployed site:
-
-```sh
-THREEJS_DEMO_URL=https://lvce-editor.github.io/threejs-demo/ npm run e2e:headless --workspace=packages/e2e
-```
+After deployment, compare the published assets with the validated build and check
+animation, preview close/reopen, edits, diagnostics, reloads, OrbitControls and
+completions in Chromium and Firefox. The local acceptance server instruments the
+sandbox worker to check its contexts and timers throughout those scenarios.

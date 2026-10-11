@@ -68,6 +68,29 @@ jobs:
         env:
           PLAYWRIGHT_BROWSERS_PATH: 0
           THREEJS_DEMO_LATENCY_MS: 150
+      - name: Test Firefox scene lifecycle
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a npm run e2e:headless --workspace=packages/e2e
+          else
+            npm run e2e:headless --workspace=packages/e2e
+          fi
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: 0
+          THREEJS_DEMO_BROWSER: firefox
+      - name: Test Firefox Pages latency
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a npm run e2e:headless --workspace=packages/e2e
+          else
+            npm run e2e:headless --workspace=packages/e2e
+          fi
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: 0
+          THREEJS_DEMO_BROWSER: firefox
+          THREEJS_DEMO_LATENCY_MS: 150
       - name: Upload browser failure evidence
         if: failure()
         uses: actions/upload-artifact@v4

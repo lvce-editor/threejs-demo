@@ -1,4 +1,5 @@
 import * as esbuild from 'esbuild-wasm'
+import { createBuildCache } from './BuildCache.ts'
 
 export type ReadSource = (path: string) => Promise<string>
 
@@ -11,6 +12,9 @@ export const compileScene = async (
     bundle: true,
     entryPoints: ['/src/main.ts'],
     format: 'iife',
+    keepNames: true,
+    minifyIdentifiers: true,
+    minifySyntax: true,
     minifyWhitespace: true,
     platform: 'browser',
     plugins: [
@@ -59,16 +63,20 @@ export const createCompiler = (): ((readSource: ReadSource) => Promise<string>) 
     const activeContext = await context
     return activeContext.rebuild()
   }
+  const cachedBuild = createBuildCache(async (readSource) => {
+    if (disposed) throw new Error('Scene compiler is disposed')
+    initialized ||= esbuild.initialize({ wasmURL: new URL('esbuild.wasm', import.meta.url).href, worker: false })
+    threeSource ||= loadThree()
+    await initialized
+    const three = await threeSource
+    if (disposed) throw new Error('Scene compiler is disposed')
+    currentReadSource = readSource
+    return compileScene(build, three, (path) => currentReadSource(path))
+  })
   const compile = (readSource: ReadSource): Promise<string> => {
     const run = async (): Promise<string> => {
       if (disposed) throw new Error('Scene compiler is disposed')
-      initialized ||= esbuild.initialize({ wasmURL: new URL('esbuild.wasm', import.meta.url).href, worker: false })
-      threeSource ||= loadThree()
-      await initialized
-      const three = await threeSource
-      if (disposed) throw new Error('Scene compiler is disposed')
-      currentReadSource = readSource
-      return compileScene(build, three, (path) => currentReadSource(path))
+      return cachedBuild(readSource)
     }
     // esbuild coalesces concurrent rebuilds. Serialize warm-up and saves so each
     // save receives output from its own current source rather than an older build.
