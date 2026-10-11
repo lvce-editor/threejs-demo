@@ -451,6 +451,7 @@ try {
     } catch (error) {
       const artifacts = join(staticRoot, '..', 'e2e-artifacts')
       await mkdir(artifacts, { recursive: true })
+      await writeFile(join(artifacts, 'failure-assertion.txt'), error instanceof Error ? error.stack || error.message : String(error))
       await writeFile(join(artifacts, 'failure-errors.json'), JSON.stringify(errors, null, 2))
       const page = browser.contexts()[0]?.pages()[0]
       if (page) {
@@ -475,14 +476,18 @@ try {
         } catch (traceError) {
           await writeFile(join(artifacts, 'typescript-failure-trace.json'), JSON.stringify({ error: String(traceError) }, null, 2))
         }
-        const sandbox = page.workers().find((worker) => worker.url().includes('/preview-sandbox-worker/'))
-        const pointerRequests = sandbox
-          ? await sandbox.evaluate(() => Object.getOwnPropertyDescriptor(globalThis, '__threejsTestResources')?.value.pointerRequests)
-          : []
-        const pointerEvents = await page.evaluate(() => Object.getOwnPropertyDescriptor(globalThis, '__threejsStartup')?.value.pointerEvents)
-        await writeFile(join(artifacts, 'pointer-events.json'), JSON.stringify({ pointerEvents, pointerRequests }, null, 2))
-        await writeFile(join(artifacts, 'failure.html'), await page.content())
-        await page.screenshot({ path: join(artifacts, 'failure.png') })
+        try {
+          const sandbox = page.workers().find((worker) => worker.url().includes('/preview-sandbox-worker/'))
+          const pointerRequests = sandbox
+            ? await sandbox.evaluate(() => Object.getOwnPropertyDescriptor(globalThis, '__threejsTestResources')?.value.pointerRequests)
+            : []
+          const pointerEvents = await page.evaluate(() => Object.getOwnPropertyDescriptor(globalThis, '__threejsStartup')?.value.pointerEvents)
+          await writeFile(join(artifacts, 'pointer-events.json'), JSON.stringify({ pointerEvents, pointerRequests }, null, 2))
+          await writeFile(join(artifacts, 'failure.html'), await page.content())
+          await page.screenshot({ path: join(artifacts, 'failure.png') })
+        } catch (captureError) {
+          await writeFile(join(artifacts, 'failure-capture-error.txt'), String(captureError))
+        }
       }
       throw error
     } finally {
