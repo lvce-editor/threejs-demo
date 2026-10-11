@@ -454,6 +454,27 @@ try {
       await writeFile(join(artifacts, 'failure-errors.json'), JSON.stringify(errors, null, 2))
       const page = browser.contexts()[0]?.pages()[0]
       if (page) {
+        try {
+          const typescript = page.workers().find((worker) => worker.url().endsWith('/typescriptWorkerMain.js'))
+          const textDocument = await rendererCommand(page, 'GetActiveEditor.getTextDocument')
+          const trace = typescript
+            ? await Promise.race([
+                typescript.evaluate(async (document) => {
+                  const { commandMap } = await import(globalThis.location.href)
+                  const firstPerformanceTrace = await commandMap['Diagnostic.getFirstPerformanceTrace'](document)
+                  const directDiagnostics = await commandMap['Diagnostic.getDiagnostics'](document)
+                  return { directDiagnostics, firstPerformanceTrace }
+                }, textDocument),
+                (async (): Promise<never> => {
+                  await delay(10_000, undefined, { ref: false })
+                  throw new Error('TypeScript failure trace timed out after 10 seconds')
+                })(),
+              ])
+            : { workerMissing: true }
+          await writeFile(join(artifacts, 'typescript-failure-trace.json'), JSON.stringify({ textDocument, trace }, null, 2))
+        } catch (traceError) {
+          await writeFile(join(artifacts, 'typescript-failure-trace.json'), JSON.stringify({ error: String(traceError) }, null, 2))
+        }
         const sandbox = page.workers().find((worker) => worker.url().includes('/preview-sandbox-worker/'))
         const pointerRequests = sandbox
           ? await sandbox.evaluate(() => Object.getOwnPropertyDescriptor(globalThis, '__threejsTestResources')?.value.pointerRequests)
