@@ -12,6 +12,7 @@ const responseDelay = Number(process.env.THREEJS_DEMO_LATENCY_MS || 0)
 if (!Number.isSafeInteger(responseDelay) || responseDelay < 0) throw new Error('THREEJS_DEMO_LATENCY_MS must be a nonnegative integer')
 const pathPrefix = '/threejs-demo'
 const staticRoot = join(import.meta.dirname, '..', '..', '.tmp', 'static')
+const sandboxWorkerPathSuffix = join('preview-sandbox-worker', 'dist', 'previewSandBoxWorkerMain.js')
 const contentTypes: Readonly<Record<string, string>> = {
   '.css': 'text/css',
   '.html': 'text/html',
@@ -79,7 +80,7 @@ const handleRequest = async (request: IncomingMessage, response: ServerResponse)
   }
   try {
     let content = await readFile(filePath)
-    if (filePath === join(staticRoot, 'preview-sandbox-worker', 'dist', 'previewSandBoxWorkerMain.js')) {
+    if (filePath.endsWith(`${sep}${sandboxWorkerPathSuffix}`)) {
       content = Buffer.concat([Buffer.from(sandboxInstrumentation), content])
     }
     response.writeHead(200, {
