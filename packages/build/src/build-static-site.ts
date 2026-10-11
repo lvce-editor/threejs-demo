@@ -87,12 +87,12 @@ await writeFile(defaultSettingsPath, `${JSON.stringify(defaultSettings, null, 2)
 // Local settings replace exported defaults in the web runtime. Seed the fixed
 // demo settings before startup, including profiles with useOnLoadJson=false.
 const demoSettings = {
-  'application.useOnLoadJson': true,
   'typescript.verifiedDiagnostics': defaultSettings['typescript.verifiedDiagnostics'],
   'eslint.ignoreHashes': defaultSettings['eslint.ignoreHashes'],
 }
 const demoStartup = `try {
   const settings = JSON.parse(localStorage.getItem('settings') || '{}')
+  if (typeof settings['application.useOnLoadJson'] !== 'boolean') settings['application.useOnLoadJson'] = true
   Object.assign(settings, ${JSON.stringify(demoSettings)})
   localStorage.setItem('settings', JSON.stringify(settings))
 } catch {
@@ -100,6 +100,30 @@ const demoStartup = `try {
 }
 `
 await writeFile(join(root, 'dist', 'demo-startup.js'), demoStartup)
+
+// Pages cannot configure response headers. Enable the shared-memory TypeScript
+// transport before starting workers; Firefox cannot share the fallback OPFS locks.
+await cp(new URL('./isolation-worker.js', import.meta.url), join(root, 'dist', 'isolation-worker.js'))
+const bootstrap = `if (!globalThis.crossOriginIsolated) {
+  await navigator.serviceWorker.register('/threejs-demo/isolation-worker.js', { scope: '/threejs-demo/', updateViaCache: 'none' })
+  await navigator.serviceWorker.ready
+  if (!navigator.serviceWorker.controller) {
+    await new Promise((resolve) => navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true }))
+  }
+  if (sessionStorage.getItem('threejs.isolationReload')) throw new Error('Cross-origin isolation is unavailable')
+  sessionStorage.setItem('threejs.isolationReload', '1')
+  location.reload()
+  await new Promise(() => {})
+}
+sessionStorage.removeItem('threejs.isolationReload')
+const config = JSON.parse(document.getElementById('Config').textContent)
+await import(config.assetDir + '/packages/renderer-process/dist/rendererProcessMain.js')
+`
+await writeFile(join(root, 'dist', 'demo-bootstrap.js'), bootstrap)
+const bootIndex = await readFile(indexPath, 'utf8')
+const rendererScript = /<script\b[^>]*src="[^"]*rendererProcessMain\.js"[^>]*><\/script>/
+if (!rendererScript.test(bootIndex)) throw new Error('Renderer bootstrap script is missing')
+await writeFile(indexPath, bootIndex.replace(rendererScript, '<script type="module" src="/threejs-demo/demo-bootstrap.js"></script>'))
 
 for (const name of ['renderer-process', 'preview-sandbox-worker', 'preview-worker']) {
   await cp(new URL('./', import.meta.resolve(`@lvce-editor/${name}`)), join(root, 'dist', commitHash, 'packages', name, 'dist'), {

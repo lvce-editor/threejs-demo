@@ -12,6 +12,7 @@ import { createRebuilder } from './Rebuilder.ts'
 
 const workspace = 'memfs:///threejs'
 const state: {
+  compiler?: ReturnType<typeof createCompiler>
   initialized: boolean
   previewOpened?: boolean
   rebuild?: () => Promise<void>
@@ -59,9 +60,10 @@ const initializeWorkspace = async (): Promise<void> => {
 const openDemo = async (): Promise<void> => {
   await initializeWorkspace()
   if (!state.initialized) {
-    const compile = createCompiler()
+    const compiler = createCompiler()
+    state.compiler = compiler
     state.rebuild = createRebuilder({
-      build: () => compile((path) => readFile(`${workspace}${path}`)),
+      build: () => compiler.compile((path) => readFile(`${workspace}${path}`)),
       publish: async (code) => {
         await writeFile(`${workspace}/dist/main.js`, code)
         if (state.previewOpened) await executeCommand('SimpleBrowser.reload')
@@ -106,6 +108,7 @@ export const activate = async (): Promise<void> => {
   registerCommand({ execute: openDemo, id: 'threejs.openDemo' })
 }
 
-export const deactivate = (): void => {
+export const deactivate = async (): Promise<void> => {
   state.changeSubscription?.dispose()
+  await state.compiler?.dispose()
 }

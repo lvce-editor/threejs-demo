@@ -58,3 +58,12 @@ const files: Record<string, string> = {
   ),
 }
 await writeFile(join(outputDirectory, 'workspace.json'), `${JSON.stringify(files)}\n`)
+
+const { compileScene } = await import(new URL('../../extension/src/Compiler.ts', import.meta.url).href)
+const inputs = Object.fromEntries(['/src/main.ts', '/node_modules/three/examples/jsm/controls/OrbitControls.js'].map((path) => [path, files[path]]))
+const initialCode = await compileScene(esbuild.build, await readFile(join(outputDirectory, 'three.js'), 'utf8'), async (path: string) => {
+  const content = files[path]
+  if (content === undefined) throw new Error(`Missing initial scene input: ${path}`)
+  return content
+})
+await writeFile(join(outputDirectory, 'initial-scene.json'), JSON.stringify({ code: initialCode, inputs }))

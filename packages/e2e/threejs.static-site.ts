@@ -169,7 +169,17 @@ const expectImageChanged = async (canvas: Locator, before: Buffer): Promise<void
 }
 
 const replaceSource = async (page: Page, source: string, save: boolean = true): Promise<void> => {
-  await page.locator('.Editor textarea').focus()
+  const firstRow = page.locator('.EditorRow').first()
+  const input = page.locator('.Editor textarea')
+  // eslint-disable-next-line e2e/no-direct-click -- establish editor focus through its native input path
+  await firstRow.click({ position: { x: 200, y: 8 } })
+  await expect(input).toBeFocused()
+  await expect
+    .poll(async () => {
+      const selections = (await rendererCommand(page, 'GetActiveEditor.getSelections')) as number[]
+      return selections[0] === 0 && selections[2] === 0 && selections[1] === selections[3] && selections[1] > 0
+    })
+    .toBe(true)
   const current = (await rendererCommand(page, 'GetActiveEditor.getTextDocument')) as { text: string }
   const lines = current.text.split('\n')
   await page.keyboard.press('Control+a')
@@ -178,7 +188,10 @@ const replaceSource = async (page: Page, source: string, save: boolean = true): 
   await page.locator('.Editor textarea').evaluate((target, text) => {
     const clipboardData = new DataTransfer()
     clipboardData.setData('text/plain', text)
-    target.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData }))
+    const event = new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData })
+    // Firefox's synthetic ClipboardEvent discards the supplied transfer contents.
+    Object.defineProperty(event, 'clipboardData', { value: clipboardData })
+    target.dispatchEvent(event)
   }, source)
   await expect
     .poll(async () => {
@@ -344,8 +357,8 @@ try {
   // eslint-disable-next-line e2e/no-direct-click -- exercises the native preview-tab disposal handler
   await page.getByRole('button', { exact: true, name: 'Close HTML Preview' }).click()
   await expect(previewCanvas).toHaveCount(0)
-  await expect.poll(contextsCount).toBe(0)
   await expect.poll(() => page.workers().filter((worker) => worker.url().includes('/preview-sandbox-worker/')).length).toBe(0)
+  await expect.poll(contextsCount).toBe(0)
   await executeCommand('Layout.showPreview', 'memfs:///threejs/index.html')
   await expectColor(previewCanvas, [50, 184, 255, 255])
   await expect.poll(contextsCount).toBe(1)
@@ -403,6 +416,7 @@ try {
     })
     await page.reload()
     await expect(sourceFirstLine).toBeVisible()
+    expect(await rendererCommand(page, 'Preferences.get', ['application.useOnLoadJson'])).toBe(false)
     await expect(previewCanvas).toBeVisible()
     await expectColor(previewCanvas, [50, 184, 255, 255])
     await replaceSource(page, `${source}\nexport const typeMismatch: number = "invalid"\n`, false)
