@@ -19,6 +19,36 @@ const contentTypes: Readonly<Record<string, string>> = {
   '.svg': 'image/svg+xml',
   '.woff2': 'font/woff2',
 }
+const sandboxInstrumentation = `{
+  const timers = new Set()
+  const contexts = new Set()
+  const nativeSetTimeout = globalThis.setTimeout
+  const nativeClearTimeout = globalThis.clearTimeout
+  globalThis.setTimeout = (callback, delay, ...args) => {
+    let handle
+    handle = nativeSetTimeout(() => {
+      timers.delete(handle)
+      callback(...args)
+    }, delay)
+    timers.add(handle)
+    return handle
+  }
+  globalThis.clearTimeout = (handle) => {
+    timers.delete(handle)
+    return nativeClearTimeout(handle)
+  }
+  const getContext = OffscreenCanvas.prototype.getContext
+  OffscreenCanvas.prototype.getContext = function (...args) {
+    const context = getContext.apply(this, args)
+    if (context && (args[0] === 'webgl' || args[0] === 'webgl2')) {
+      contexts.add(context)
+      this.addEventListener('webglcontextlost', () => contexts.delete(context), { once: true })
+    }
+    return context
+  }
+  Object.defineProperty(globalThis, '__threejsTestResources', { value: { contexts, timers } })
+}
+`
 
 const getFilePath = (requestUrl: string): string | undefined => {
   const url = new URL(requestUrl, 'http://localhost')
@@ -47,7 +77,10 @@ const handleRequest = async (request: IncomingMessage, response: ServerResponse)
     return
   }
   try {
-    const content = await readFile(filePath)
+    let content = await readFile(filePath)
+    if (filePath.endsWith('/preview-sandbox-worker/dist/previewSandBoxWorkerMain.js')) {
+      content = Buffer.concat([Buffer.from(sandboxInstrumentation), content])
+    }
     response.writeHead(200, {
       'Content-Type': contentTypes[extname(filePath)] || 'application/octet-stream',
       ...(responseDelay && { 'Cache-Control': 'public, max-age=600' }),
@@ -118,44 +151,9 @@ try {
   page.on('requestfailed', (request) => {
     errors.push(`${request.failure()?.errorText} ${request.url()}`)
   })
-  const instrumentation: Promise<unknown>[] = []
   page.on('worker', (worker) => {
     errors.push(`worker ${worker.url()}`)
-    if (!worker.url().includes('/preview-sandbox-worker/')) return
-    // Observe the native APIs without adding test hooks to the sandbox product.
-    /* eslint-disable unicorn/no-global-object-property-assignment, @typescript-eslint/unbound-method, unicorn/no-this-outside-of-class, prefer-destructuring */
-    instrumentation.push(
-      worker.evaluate(() => {
-        const timers = new Set<ReturnType<typeof setTimeout>>()
-        const contexts = new Set<OffscreenRenderingContext>()
-        const nativeSetTimeout = globalThis.setTimeout
-        const nativeClearTimeout = globalThis.clearTimeout
-        globalThis.setTimeout = ((callback: (...args: unknown[]) => void, delay: number, ...args: unknown[]) => {
-          const handle = nativeSetTimeout(() => {
-            timers.delete(handle)
-            callback(...args)
-          }, delay)
-          timers.add(handle)
-          return handle
-        }) as typeof setTimeout
-        globalThis.clearTimeout = ((handle: ReturnType<typeof setTimeout>) => {
-          timers.delete(handle)
-          nativeClearTimeout(handle)
-        }) as typeof clearTimeout
-        const getContext = OffscreenCanvas.prototype.getContext
-        OffscreenCanvas.prototype.getContext = function (this: OffscreenCanvas, ...args: Parameters<typeof getContext>) {
-          const context = getContext.apply(this, args)
-          if (context && (args[0] === 'webgl' || args[0] === 'webgl2')) {
-            contexts.add(context)
-            this.addEventListener('webglcontextlost', () => contexts.delete(context), { once: true })
-          }
-          return context
-        } as typeof getContext
-        Object.defineProperty(globalThis, '__threejsTestResources', { value: { contexts, timers } })
-      }),
-    )
   })
-  /* eslint-enable unicorn/no-global-object-property-assignment, @typescript-eslint/unbound-method, unicorn/no-this-outside-of-class, prefer-destructuring */
   const url = process.env.THREEJS_DEMO_URL || `http://127.0.0.1:${address.port}${pathPrefix}/`
   await verifyFirefoxCompilerWarnings(url)
   const sourceFirstLine = page.locator('.EditorRow', { hasText: "import * as THREE from 'three'" })
@@ -174,7 +172,6 @@ try {
   }
   await expect(previewCanvas).toBeVisible()
   await expectColor(previewCanvas, [50, 184, 255, 255])
-  await Promise.all(instrumentation)
   const resourceCounts = async (): Promise<{ contexts: number; timers: number }> => {
     const worker = page.workers().find((worker) => worker.url().includes('/preview-sandbox-worker/'))
     if (!worker) throw new Error('Sandbox worker is missing')
