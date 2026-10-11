@@ -5,6 +5,7 @@ import { extname, join, normalize, sep } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { chromium } from 'playwright'
 import { PNG } from 'pngjs'
+import { verifyFirefoxCompilerWarnings } from './firefoxCompilerWarnings.ts'
 
 const responseDelay = Number(process.env.THREEJS_DEMO_LATENCY_MS || 0)
 if (!Number.isSafeInteger(responseDelay) || responseDelay < 0) throw new Error('THREEJS_DEMO_LATENCY_MS must be a nonnegative integer')
@@ -156,6 +157,7 @@ try {
   })
   /* eslint-enable unicorn/no-global-object-property-assignment, @typescript-eslint/unbound-method, unicorn/no-this-outside-of-class, prefer-destructuring */
   const url = process.env.THREEJS_DEMO_URL || `http://127.0.0.1:${address.port}${pathPrefix}/`
+  await verifyFirefoxCompilerWarnings(url)
   const sourceFirstLine = page.locator('.EditorRow', { hasText: "import * as THREE from 'three'" })
   const previewCanvas = page.locator('.Viewlet.Preview #scene')
 
@@ -229,6 +231,7 @@ try {
   await expect(sourceFirstLine).toBeVisible()
   await expect(previewCanvas).toBeVisible()
   await expectColor(previewCanvas, [50, 184, 255, 255])
+  expect(errors.filter((error) => error.includes('Failed to hash ESLint files in one batch'))).toEqual([])
 } catch (error) {
   const artifacts = join(staticRoot, '..', 'e2e-artifacts')
   await mkdir(artifacts, { recursive: true })
