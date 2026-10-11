@@ -43,13 +43,13 @@ export const compileScene = async (
 }
 
 export const createCompiler = (): ((readSource: ReadSource) => Promise<string>) & { dispose: () => Promise<void> } => {
-  const initialized = esbuild.initialize({ wasmURL: new URL('esbuild.wasm', import.meta.url).href, worker: false })
+  let initialized: Promise<void> | undefined
   const loadThree = async (): Promise<string> => {
     const response = await fetch(new URL('three.js', import.meta.url))
     if (!response.ok) throw new Error(`Unable to load Three.js: ${response.status}`)
     return response.text()
   }
-  const threeSource = loadThree()
+  let threeSource: Promise<string> | undefined
   let context: Promise<esbuild.BuildContext> | undefined
   let currentReadSource: ReadSource
   let tail: Promise<void> = Promise.resolve()
@@ -62,6 +62,8 @@ export const createCompiler = (): ((readSource: ReadSource) => Promise<string>) 
   const compile = (readSource: ReadSource): Promise<string> => {
     const run = async (): Promise<string> => {
       if (disposed) throw new Error('Scene compiler is disposed')
+      initialized ||= esbuild.initialize({ wasmURL: new URL('esbuild.wasm', import.meta.url).href, worker: false })
+      threeSource ||= loadThree()
       await initialized
       const three = await threeSource
       if (disposed) throw new Error('Scene compiler is disposed')

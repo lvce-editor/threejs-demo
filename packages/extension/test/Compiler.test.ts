@@ -1,8 +1,8 @@
 import * as esbuild from 'esbuild'
 import assert from 'node:assert/strict'
-import test from 'node:test'
+import test, { mock } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { compileScene } from '../src/Compiler.ts'
+import { compileScene, createCompiler } from '../src/Compiler.ts'
 
 void test('the scene compiler keeps used Three.js exports and removes unused ones', async () => {
   const threeBuild = await esbuild.build({
@@ -41,5 +41,23 @@ void test('incremental scene compilation reloads edited virtual source', async (
     assert.doesNotMatch(second, /initial/)
   } finally {
     await context?.dispose()
+  }
+})
+
+void test('a compiler for the prebuilt scene needs no runtime loading before an edited build', async () => {
+  const fetch = mock.method(globalThis, 'fetch', async () => {
+    throw new Error('The compiler loaded a runtime before compilation')
+  })
+  try {
+    const compile = createCompiler()
+    await compile.dispose()
+    assert.equal(fetch.mock.callCount(), 0)
+    await assert.rejects(
+      compile(async () => ''),
+      /Scene compiler is disposed/,
+    )
+    assert.equal(fetch.mock.callCount(), 0)
+  } finally {
+    fetch.mock.restore()
   }
 })

@@ -23,6 +23,22 @@ const contentTypes: Readonly<Record<string, string>> = {
 }
 const sandboxInstrumentation = `{
   const timers = new Set()
+  const pointerRequests = []
+  const observedPorts = new WeakSet()
+  const addPortListener = MessagePort.prototype.addEventListener
+  MessagePort.prototype.addEventListener = function (type, ...args) {
+    if (type === 'message' && !observedPorts.has(this)) {
+      observedPorts.add(this)
+      addPortListener.call(this, type, event => {
+        const { method, params } = event.data || {}
+        if (typeof method === 'string' && method.startsWith('SandBox.handlePointer')) {
+          pointerRequests.push({ method, params })
+          if (pointerRequests.length > 64) pointerRequests.shift()
+        }
+      })
+    }
+    return addPortListener.call(this, type, ...args)
+  }
   const contexts = new Set()
   const nativeSetTimeout = globalThis.setTimeout
   const nativeClearTimeout = globalThis.clearTimeout
@@ -48,7 +64,7 @@ const sandboxInstrumentation = `{
     }
     return context
   }
-  Object.defineProperty(globalThis, '__threejsTestResources', { value: { contexts, timers } })
+  Object.defineProperty(globalThis, '__threejsTestResources', { value: { contexts, pointerRequests, timers } })
 }
 `
 
@@ -237,7 +253,18 @@ try {
       const typeMismatchRow = page.locator('.EditorRow', { hasText: 'export const typeMismatch:' })
 
       await page.addInitScript(() => {
-        const startup = { visibleBars: [] as string[] }
+        const startup = { pointerEvents: [] as unknown[], visibleBars: [] as string[] }
+        for (const type of ['pointerdown', 'pointermove', 'pointerup'] as const) {
+          globalThis.document.addEventListener(
+            type,
+            ({ clientX, clientY, target, type }) => {
+              if (!(target instanceof HTMLElement) || !target.closest('.Preview')) return
+              startup.pointerEvents.push({ id: target.dataset.id, type, x: clientX, y: clientY })
+              if (startup.pointerEvents.length > 64) startup.pointerEvents.shift()
+            },
+            { capture: true },
+          )
+        }
         Object.defineProperty(globalThis, '__threejsStartup', { value: startup })
         const observe = (): void => {
           for (const selector of ['.ActivityBar', '.StatusBar']) {
@@ -424,6 +451,12 @@ try {
       await writeFile(join(artifacts, 'failure-errors.json'), JSON.stringify(errors, null, 2))
       const page = browser.contexts()[0]?.pages()[0]
       if (page) {
+        const sandbox = page.workers().find((worker) => worker.url().includes('/preview-sandbox-worker/'))
+        const pointerRequests = sandbox
+          ? await sandbox.evaluate(() => Object.getOwnPropertyDescriptor(globalThis, '__threejsTestResources')?.value.pointerRequests)
+          : []
+        const pointerEvents = await page.evaluate(() => Object.getOwnPropertyDescriptor(globalThis, '__threejsStartup')?.value.pointerEvents)
+        await writeFile(join(artifacts, 'pointer-events.json'), JSON.stringify({ pointerEvents, pointerRequests }, null, 2))
         await writeFile(join(artifacts, 'failure.html'), await page.content())
         await page.screenshot({ path: join(artifacts, 'failure.png') })
       }
