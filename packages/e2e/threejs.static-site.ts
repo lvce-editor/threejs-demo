@@ -416,7 +416,7 @@ try {
     })
     await page.reload()
     await expect(sourceFirstLine).toBeVisible()
-    expect(await rendererCommand(page, 'Preferences.get', ['application.useOnLoadJson'])).toBe(false)
+    expect(await rendererCommand(page, 'Preferences.get', ['application.useOnLoadJson'])).toBe(true)
     await expect(previewCanvas).toBeVisible()
     await expectColor(previewCanvas, [50, 184, 255, 255])
     await replaceSource(page, `${source}\nexport const typeMismatch: number = "invalid"\n`, false)

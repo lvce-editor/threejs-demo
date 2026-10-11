@@ -87,12 +87,12 @@ await writeFile(defaultSettingsPath, `${JSON.stringify(defaultSettings, null, 2)
 // Local settings replace exported defaults in the web runtime. Seed the fixed
 // demo settings before startup, including profiles with useOnLoadJson=false.
 const demoSettings = {
+  'application.useOnLoadJson': true,
   'typescript.verifiedDiagnostics': defaultSettings['typescript.verifiedDiagnostics'],
   'eslint.ignoreHashes': defaultSettings['eslint.ignoreHashes'],
 }
 const demoStartup = `try {
   const settings = JSON.parse(localStorage.getItem('settings') || '{}')
-  if (typeof settings['application.useOnLoadJson'] !== 'boolean') settings['application.useOnLoadJson'] = true
   Object.assign(settings, ${JSON.stringify(demoSettings)})
   localStorage.setItem('settings', JSON.stringify(settings))
 } catch {
