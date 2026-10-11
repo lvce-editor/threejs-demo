@@ -95,20 +95,31 @@ const handleRequest = async (request: IncomingMessage, response: ServerResponse)
   }
 }
 
-const expectColor = async (canvas: Locator, color: readonly number[], timeout: number = 15_000): Promise<void> => {
+const expectColor = async (canvas: Locator, color: readonly number[], timeout: number = 5000): Promise<void> => {
+  const started = performance.now()
+  const trace = (stage: string, detail: unknown = undefined): void => {
+    process.stdout.write(`scene-capture ${JSON.stringify({ color, detail, elapsed: performance.now() - started, stage })}\n`)
+  }
+  trace('start')
   await expect
     .poll(
       async () => {
+        trace('bounds-start')
         const bounds = await canvas.boundingBox()
+        trace('bounds-end', bounds)
         if (!bounds) return []
         // Capture the rendered region even if a refresh replaces the DOM node.
+        trace('screenshot-start')
         const bitmap = PNG.sync.read(await canvas.page().screenshot({ clip: bounds }))
         const offset = (Math.floor(bitmap.height / 2) * bitmap.width + Math.floor(bitmap.width / 2)) * 4
-        return [...bitmap.data.subarray(offset, offset + 4)]
+        const pixel = [...bitmap.data.subarray(offset, offset + 4)]
+        trace('screenshot-end', pixel)
+        return pixel
       },
       { timeout },
     )
     .toEqual(color)
+  trace('passed')
 }
 
 const screenshotCanvas = async (canvas: Locator): Promise<Buffer | undefined> => {
@@ -464,10 +475,31 @@ try {
   await page.locator('.Editor textarea').focus()
   const completionRow = source.split('\n').findIndex((line) => line.startsWith('renderer.setSize'))
   if (completionRow === -1) throw new Error('Renderer completion location is missing')
-  await rendererCommand(page, 'GetActiveEditor.setSelections', [[completionRow, 9, completionRow, 9]])
+  const completionSelection = [completionRow, 9, completionRow, 9]
+  await rendererCommand(page, 'GetActiveEditor.setSelections', [completionSelection])
+  await expect.poll(() => rendererCommand(page, 'GetActiveEditor.getSelections')).toEqual(completionSelection)
+  process.stdout.write(
+    `completion-before ${JSON.stringify({
+      document: await rendererCommand(page, 'GetActiveEditor.getTextDocument'),
+      focused: await page.locator('.Editor textarea').evaluate((element) => element === document.activeElement),
+      selections: await rendererCommand(page, 'GetActiveEditor.getSelections'),
+    })}\n`,
+  )
   await page.keyboard.press('Control+Space')
   const completionItem = page.locator('.EditorCompletionItem').filter({ hasText: 'autoClear' }).first()
-  await expect(completionItem).toBeVisible({ timeout: 30_000 })
+  try {
+    await expect(completionItem).toBeVisible({ timeout: 30_000 })
+  } catch (error) {
+    process.stdout.write(
+      `completion-failure ${JSON.stringify({
+        diagnostics: await diagnostics(page),
+        document: await rendererCommand(page, 'GetActiveEditor.getTextDocument'),
+        selections: await rendererCommand(page, 'GetActiveEditor.getSelections'),
+        suggestions: await page.getByRole('listbox', { name: 'Suggest' }).textContent(),
+      })}\n`,
+    )
+    throw error
+  }
   expect(page.workers().filter((worker) => worker.url().endsWith('/typescriptWorkerMain.js'))).toHaveLength(1)
   await page.keyboard.press('Escape')
   await page.setViewportSize({ height: 700, width: 1000 })
