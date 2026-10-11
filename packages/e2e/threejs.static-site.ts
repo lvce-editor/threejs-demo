@@ -289,6 +289,7 @@ try {
   })
   page.on('console', (message) => {
     if (message.type() === 'error' || message.type() === 'warning' || message.text().startsWith('[threejs-typescript]')) errors.push(message.text())
+    if (message.text().startsWith('[threejs-typescript]')) process.stdout.write(`${message.text()}\n`)
   })
   page.on('response', (response) => {
     if (response.status() >= 400) errors.push(`${response.status()} ${response.url()}`)
