@@ -14,48 +14,6 @@ if (!Number.isSafeInteger(responseDelay) || responseDelay < 0) throw new Error('
 const pathPrefix = '/threejs-demo'
 const staticRoot = join(import.meta.dirname, '..', '..', '.tmp', 'static')
 const sandboxWorkerPathSuffix = join('preview-sandbox-worker', 'dist', 'previewSandBoxWorkerMain.js')
-const typeScriptExtensionSuffix = join('builtin.language-features-typescript', 'dist', 'languageFeaturesTypeScriptMain.js')
-const typeScriptWorkerSuffix = join('builtin.language-features-typescript', 'typescriptWorkerMain.js')
-const instrumentTypeScript = (source: string, worker: boolean): string => {
-  const seams = worker
-    ? [
-        ['const initialize = async (typeScriptPath, crossOriginIsolated) => {', "globalThis.__threejsTsStage('initialize', crossOriginIsolated);"],
-        ['sourceClient = await clientReady;', "globalThis.__threejsTsStage('source-ready');"],
-        ['return initialize$1(sourceClient, fs);', "globalThis.__threejsTsStage('journals-start');"],
-        ['return createCachedClient(client, fs, general, dependencies);', "globalThis.__threejsTsStage('journals-ready');"],
-        ['set(id, fs, cachedClient, ts);', "globalThis.__threejsTsStage('initialized');"],
-        ['const getDiagnostics2 = async (textDocument, trace) => {', "globalThis.__threejsTsStage('diagnostics-start', textDocument.text.length);"],
-        ["const tsResult = measure(actualTrace, 'semanticDiagnostics',", "globalThis.__threejsTsStage('semantic-start');"],
-        ['return diagnostics;\n  } catch (error) {', "globalThis.__threejsTsStage('diagnostics-end', diagnostics.length);"],
-        [
-          'actualTrace.totalDurationMs = performance.now() - start;',
-          "globalThis.__threejsTsStage('diagnostics-performance', { totalDurationMs: actualTrace.totalDurationMs, stages: actualTrace.stages, syncRpc: actualTrace.syncRpc, fileCache: actualTrace.fileCache, loadedFiles: actualTrace.loadedFiles?.length });",
-        ],
-      ]
-    : [
-        ['const provideDiagnostics = async textDocument => {', "globalThis.__threejsTsStage('provider-start', textDocument.text.length);"],
-        ["return worker.invoke('Diagnostic.getDiagnostics', textDocument);", "globalThis.__threejsTsStage('provider-worker-ready');"],
-        ['const readFileSync = async (id, uri) => {', "globalThis.__threejsTsStage('read-start', uri);"],
-        ['const writeResult = async (id, resultGenerator) => {', "globalThis.__threejsTsStage('response-start', id);"],
-        ["if ('shared' in setup) {", "globalThis.__threejsTsStage('response-loaded', id);"],
-        ['await writeSharedResult(setup, result, error);', "globalThis.__threejsTsStage('response-written', id);"],
-      ]
-  for (const [seam, trace] of seams) {
-    if (!source.includes(seam)) throw new Error(`TypeScript trace seam missing: ${seam}`)
-    const before = seam.startsWith('return ') || seam.startsWith('const tsResult')
-    source = source.replace(seam, () => (before ? `${trace}\n${seam}` : `${seam}\n${trace}`))
-  }
-  return (
-    `globalThis.__threejsTsTrace = { entries: [], dropped: 0 };
-    globalThis.__threejsTsStage = (stage, detail) => {
-      const trace = globalThis.__threejsTsTrace;
-      if (trace.entries.length >= 128) { trace.dropped++; ${worker ? 'return;' : 'trace.entries.shift();'} }
-      const entry = { stage, detail, time: Date.now() };
-      trace.entries.push(entry);
-      ${worker ? "console.log('[threejs-typescript]' + JSON.stringify(entry));" : ''}
-    };\n` + source
-  )
-}
 const contentTypes: Readonly<Record<string, string>> = {
   '.css': 'text/css',
   '.html': 'text/html',
@@ -125,9 +83,6 @@ const handleRequest = async (request: IncomingMessage, response: ServerResponse)
     let content = await readFile(filePath)
     if (filePath.endsWith(`${sep}${sandboxWorkerPathSuffix}`)) {
       content = Buffer.concat([Buffer.from(sandboxInstrumentation), content])
-    }
-    if (filePath.endsWith(`${sep}${typeScriptExtensionSuffix}`) || filePath.endsWith(`${sep}${typeScriptWorkerSuffix}`)) {
-      content = Buffer.from(instrumentTypeScript(content.toString(), filePath.endsWith(`${sep}${typeScriptWorkerSuffix}`)))
     }
     response.writeHead(200, {
       'Content-Type': contentTypes[extname(filePath)] || 'application/octet-stream',
@@ -292,8 +247,7 @@ try {
     errors.push(error.stack || error.message)
   })
   page.on('console', (message) => {
-    if (message.type() === 'error' || message.type() === 'warning' || message.text().startsWith('[threejs-typescript]')) errors.push(message.text())
-    if (message.text().startsWith('[threejs-typescript]')) process.stdout.write(`${message.text()}\n`)
+    if (message.type() === 'error' || message.type() === 'warning') errors.push(message.text())
   })
   page.on('response', (response) => {
     if (response.status() >= 400) errors.push(`${response.status()} ${response.url()}`)
@@ -536,13 +490,6 @@ try {
   await writeFile(join(artifacts, 'failure-errors.json'), JSON.stringify(errors, null, 2))
   const page = browser.contexts()[0]?.pages()[0]
   if (page) {
-    const traces = await Promise.all(
-      page
-        .workers()
-        .filter((worker) => worker.url().endsWith('/languageFeaturesTypeScriptMain.js'))
-        .map((worker) => worker.evaluate(() => Object.getOwnPropertyDescriptor(globalThis, '__threejsTsTrace')?.value)),
-    )
-    await writeFile(join(artifacts, 'failure-typescript.json'), JSON.stringify(traces, null, 2))
     await writeFile(join(artifacts, 'failure.html'), await page.content())
     await page.screenshot({ path: join(artifacts, 'failure.png') })
   }
