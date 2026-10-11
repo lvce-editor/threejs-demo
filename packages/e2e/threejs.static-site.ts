@@ -96,6 +96,28 @@ const instrumentSandbox = (source: string): string => {
     `,
   )
   source = source.replace(dispose, () => `${dispose}\nframeTrace.disposed = Date.now();`)
+  const post = `port.postMessage({
+        bitmap,
+        type: 'frame'
+      }, [bitmap]);`
+  if (!source.includes(post)) throw new Error('Sandbox frame post trace seam is missing')
+  source = source.replace(
+    post,
+    () => `frameTrace.bitmap = { width: bitmap.width, height: bitmap.height, time: Date.now() };
+      try {
+        ${post}
+        frameTrace.posts = (frameTrace.posts || 0) + 1;
+        frameTrace.last_post = Date.now();
+      } catch (error) {
+        frameTrace.postError = { message: String(error), time: Date.now() };
+        throw error;
+      }`,
+  )
+  source = source.replace(
+    'port.onmessage = event => {',
+    () => `port.onmessageerror = () => { frameTrace.messageError = Date.now(); };
+    port.onmessage = event => {`,
+  )
   const dispatch = 'const dispatchEvent = (element, event) => {'
   const frameSeams = [
     ['const tick = () => {', 'ticks'],
@@ -142,6 +164,46 @@ const instrumentSandbox = (source: string): string => {
   )
 }
 
+const instrumentNative = (source: string): Buffer<ArrayBuffer> => {
+  const create = 'const createCanvasPresentation = (canvas, onDispose) => {'
+  const dispose = 'port1.close();\n    onDispose();'
+  if (!source.includes(create) || !source.includes(dispose)) throw new Error('Native lifecycle trace seam is missing')
+  source = source.replace(
+    create,
+    () => `${create}
+          const frameTrace = { created: Date.now(), id: canvas.dataset.id, frames: 0 }
+          const trace = globalThis.__threejsPresentationTrace ||= { frames: 0, sinks: [] }
+          trace.sinks.push(frameTrace)
+          if (trace.sinks.length > 128) trace.sinks.shift()
+        `,
+  )
+  source = source.replace(dispose, () => `frameTrace.disposed = Date.now(); ${dispose}`)
+  if (!source.includes('canvasPresentation: presentation')) throw new Error('Published native presentation ownership is missing')
+  const receive = 'port1.onmessage = event => {'
+  if (!source.includes(receive)) throw new Error('Native receive trace seam is missing')
+  source = source.replace(
+    receive,
+    () => `port1.onmessageerror = () => { frameTrace.messageError = Date.now(); };
+        ${receive}
+        frameTrace.messages = (frameTrace.messages || 0) + 1;
+        frameTrace.last_message = Date.now();`,
+  )
+  const seam = 'context.transferFromImageBitmap(bitmap);'
+  if (!source.includes(seam)) throw new Error('Native presentation trace seam is missing')
+  return Buffer.from(
+    source.replace(
+      seam,
+      () => `${seam}
+            const trace = globalThis.__threejsPresentationTrace
+            trace.frames++
+            trace.last = Date.now()
+            frameTrace.frames++
+            frameTrace.last = Date.now()
+          `,
+    ),
+  )
+}
+
 const handleRequest = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
   if (responseDelay) await delay(responseDelay)
   const filePath = getFilePath(request.url || '')
@@ -176,43 +238,7 @@ const handleRequest = async (request: IncomingMessage, response: ServerResponse)
       content = Buffer.from(pipelineInstrumentation + source)
     }
     if (filePath.endsWith(`${sep}${rendererProcessPathSuffix}`)) {
-      let source = content.toString()
-      const create = 'const createCanvasPresentation = (canvas, onDispose) => {'
-      const dispose = 'port1.close();\n    onDispose();'
-      if (!source.includes(create) || !source.includes(dispose)) throw new Error('Native lifecycle trace seam is missing')
-      source = source.replace(
-        create,
-        () => `${create}
-          const frameTrace = { created: Date.now(), id: canvas.dataset.id, frames: 0 }
-          const trace = globalThis.__threejsPresentationTrace ||= { frames: 0, sinks: [] }
-          trace.sinks.push(frameTrace)
-          if (trace.sinks.length > 128) trace.sinks.shift()
-        `,
-      )
-      source = source.replace(dispose, () => `frameTrace.disposed = Date.now(); ${dispose}`)
-      const ownership = `const presentation = createCanvasPresentation(canvas, () => set$c(canvasId, undefined));
-  set$c(canvasId, {
-    factory: {},
-    state: {
-      $Viewlet: canvas
-    }
-  });`
-      if (!source.includes(ownership)) throw new Error('Native presentation ownership candidate seam is missing')
-      source = source.replace(ownership, () => ownership.replace('$Viewlet: canvas\n', '$Viewlet: canvas,\n      canvasPresentation: presentation\n'))
-      const seam = 'context.transferFromImageBitmap(bitmap);'
-      if (!source.includes(seam)) throw new Error('Native presentation trace seam is missing')
-      content = Buffer.from(
-        source.replace(
-          seam,
-          () => `${seam}
-            const trace = globalThis.__threejsPresentationTrace
-            trace.frames++
-            trace.last = Date.now()
-            frameTrace.frames++
-            frameTrace.last = Date.now()
-          `,
-        ),
-      )
+      content = instrumentNative(content.toString())
     }
     response.writeHead(200, {
       'Content-Type': contentTypes[extname(filePath)] || 'application/octet-stream',
