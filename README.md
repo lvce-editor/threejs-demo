@@ -1,5 +1,7 @@
 # Three.js demo
 
+[Open the demo](https://lvce-editor.github.io/threejs-demo/).
+
 Edit an npm Three.js scene in TypeScript with Lvce Editor. The GitHub Pages site
 opens `src/main.ts` beside a live preview. Saving rebuilds `dist/main.js` with
 esbuild-wasm in the browser. TypeScript and ESLint diagnostics run through the

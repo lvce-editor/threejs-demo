@@ -41,7 +41,7 @@ const defaultSettings = JSON.parse(await readFile(defaultSettingsPath, 'utf8'))
 defaultSettings['application.useOnLoadJson'] = true
 await writeFile(defaultSettingsPath, `${JSON.stringify(defaultSettings, null, 2)}\n`)
 
-for (const name of ['renderer-process', 'preview-sandbox-worker']) {
+for (const name of ['renderer-process', 'preview-sandbox-worker', 'preview-worker']) {
   await cp(new URL('./', import.meta.resolve(`@lvce-editor/${name}`)), join(root, 'dist', commitHash, 'packages', name, 'dist'), {
     force: true,
     recursive: true,
