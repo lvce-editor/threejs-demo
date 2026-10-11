@@ -161,7 +161,8 @@ if (!address || typeof address === 'string') {
 
 try {
   for (const browserType of [chromium, firefox]) {
-    const browser = await browserType.launch({ headless: true })
+    // Firefox otherwise blocklists WebGL2 on GPU-less CI runners.
+    const browser = await browserType.launch({ headless: true, firefoxUserPrefs: { 'webgl.force-enabled': true } })
     const errors: string[] = []
     try {
       const page = await browser.newPage()
