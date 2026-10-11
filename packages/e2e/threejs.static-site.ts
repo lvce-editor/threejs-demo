@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { extname, join, normalize, sep } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import { chromium } from 'playwright'
+import { chromium, firefox } from 'playwright'
 import { PNG } from 'pngjs'
 import { verifyFirefoxCompilerWarnings } from './firefoxCompilerWarnings.ts'
 
@@ -159,153 +159,159 @@ if (!address || typeof address === 'string') {
   throw new Error('Failed to start static test server')
 }
 
-const browser = await chromium.launch({ headless: true })
-const errors: string[] = []
 try {
-  const page = await browser.newPage()
-  page.on('pageerror', (error) => {
-    errors.push(error.stack || error.message)
-  })
-  page.on('console', (message) => {
-    if (message.type() === 'error' || message.type() === 'warning') errors.push(message.text())
-  })
-  page.on('response', (response) => {
-    if (response.status() >= 400) errors.push(`${response.status()} ${response.url()}`)
-  })
-  page.on('requestfailed', (request) => {
-    errors.push(`${request.failure()?.errorText} ${request.url()}`)
-  })
-  page.on('worker', (worker) => {
-    errors.push(`worker ${worker.url()}`)
-  })
-  const url = process.env.THREEJS_DEMO_URL || `http://127.0.0.1:${address.port}${pathPrefix}/`
-  await verifyFirefoxCompilerWarnings(url)
-  const sourceFirstLine = page.locator('.EditorRow', { hasText: "import * as THREE from 'three'" })
-  const previewCanvas = page.locator('.Viewlet.Preview #scene')
-
-  await page.goto(url)
-  try {
-    await expect(sourceFirstLine).toBeVisible()
-  } catch (error) {
-    const artifacts = join(staticRoot, '..', 'e2e-artifacts')
-    await mkdir(artifacts, { recursive: true })
-    await writeFile(join(artifacts, 'startup-errors.json'), JSON.stringify(errors, null, 2))
-    await writeFile(join(artifacts, 'startup.html'), await page.content())
-    await page.screenshot({ path: join(artifacts, 'startup.png') })
-    throw error
-  }
-  await expect(previewCanvas).toBeVisible()
-  await expectColor(previewCanvas, [50, 184, 255, 255])
-  const source = await readFile(join(import.meta.dirname, '../../src/main.ts'), 'utf8')
-  expect(navigationErrors(errors)).toEqual([])
-  const resourceCounts = async (): Promise<{ contexts: number; timers: number }> => {
-    const worker = page.workers().find((worker) => worker.url().includes('/preview-sandbox-worker/'))
-    if (!worker) throw new Error('Sandbox worker is missing')
-    return worker.evaluate(() => {
-      const resources = Object.getOwnPropertyDescriptor(globalThis, '__threejsTestResources')?.value
-      return { contexts: resources.contexts.size, timers: resources.timers.size }
-    })
-  }
-  const contextsCount = async (): Promise<number> => {
-    const counts = await resourceCounts()
-    return counts.contexts
-  }
-  await expect.poll(contextsCount).toBe(1)
-  const initialResources = await resourceCounts()
-  const initialTimers = initialResources.timers
-  await replaceSource(page, `${source}\nexport const typeMismatch: number = "invalid"\nexport type Unsafe = any\n`, false)
-  await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain("Type 'string' is not assignable to type 'number'")
-  await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain('Unexpected any')
-  await replaceSource(page, source, false)
-  await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toBe('[]')
-
-  await replaceSource(page, source.replace('#32b8ff', '#ff0000'))
-  await expectColor(previewCanvas, [255, 0, 0, 255])
-  await replaceSource(page, source.replace('#32b8ff', '#00ff00'))
-  await replaceSource(page, source.replace('#32b8ff', '#0000ff'))
-  await expectColor(previewCanvas, [0, 0, 255, 255])
-
-  await replaceSource(page, `${source}\nconst =\n`)
-  await expect(page.getByText(/Build failed:/).first()).toBeVisible()
-  await expectColor(previewCanvas, [0, 0, 255, 255])
-  await replaceSource(page, source)
-  await expectColor(previewCanvas, [50, 184, 255, 255])
-
-  for (let iteration = 0; iteration < 20; iteration++) {
-    const red = iteration % 2 === 0
-    await replaceSource(
-      page,
-      source.replace('#32b8ff', () => (red ? '#ff0000' : '#00ff00')),
-    )
-    await expectColor(previewCanvas, red ? [255, 0, 0, 255] : [0, 255, 0, 255])
-    await expect.poll(contextsCount).toBe(1)
-    await expect
-      .poll(async () => {
-        const counts = await resourceCounts()
-        return counts.timers <= initialTimers + 1
+  for (const browserType of [chromium, firefox]) {
+    const browser = await browserType.launch({ headless: true })
+    const errors: string[] = []
+    try {
+      const page = await browser.newPage()
+      page.on('pageerror', (error) => {
+        errors.push(error.stack || error.message)
       })
-      .toBe(true)
-    expect(page.workers().filter((worker) => worker.url().includes('/preview-sandbox-worker/'))).toHaveLength(1)
-  }
-  expect(errors.filter((error) => error.includes('Too many active WebGL contexts'))).toEqual([])
+      page.on('console', (message) => {
+        if (message.type() === 'error' || message.type() === 'warning') errors.push(message.text())
+      })
+      page.on('response', (response) => {
+        if (response.status() >= 400) errors.push(`${response.status()} ${response.url()}`)
+      })
+      page.on('requestfailed', (request) => {
+        errors.push(`${request.failure()?.errorText} ${request.url()}`)
+      })
+      page.on('worker', (worker) => {
+        errors.push(`worker ${worker.url()}`)
+      })
+      const url = process.env.THREEJS_DEMO_URL || `http://127.0.0.1:${address.port}${pathPrefix}/`
+      if (browserType === chromium) await verifyFirefoxCompilerWarnings(url)
+      const sourceFirstLine = page.locator('.EditorRow', { hasText: "import * as THREE from 'three'" })
+      const previewCanvas = page.locator('.Viewlet.Preview #scene')
 
-  await page.reload()
-  await expect(sourceFirstLine).toBeVisible()
-  await expect(previewCanvas).toBeVisible()
-  await expectColor(previewCanvas, [50, 184, 255, 255])
-  expect(navigationErrors(errors)).toEqual([])
-  for (let iteration = 0; iteration < 2; iteration++) {
-    await page.evaluate(() => {
-      const settings = JSON.parse(globalThis.localStorage.getItem('settings') || '{}')
-      settings['application.useOnLoadJson'] = false
-      globalThis.localStorage.setItem('settings', JSON.stringify(settings))
-    })
-    await page.reload()
-    await expect(sourceFirstLine).toBeVisible()
-    await expect(previewCanvas).toBeVisible()
-    await expectColor(previewCanvas, [50, 184, 255, 255])
-    await replaceSource(page, `${source}\nexport const typeMismatch: number = "invalid"\n`, false)
-    await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain("Type 'string' is not assignable to type 'number'")
-    await replaceSource(page, source.replace('#32b8ff', '#ff0000'))
-    await expectColor(previewCanvas, [255, 0, 0, 255])
-    await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toBe('[]')
-    expect(navigationErrors(errors)).toEqual([])
+      await page.goto(url)
+      try {
+        await expect(sourceFirstLine).toBeVisible()
+      } catch (error) {
+        const artifacts = join(staticRoot, '..', 'e2e-artifacts')
+        await mkdir(artifacts, { recursive: true })
+        await writeFile(join(artifacts, 'startup-errors.json'), JSON.stringify(errors, null, 2))
+        await writeFile(join(artifacts, 'startup.html'), await page.content())
+        await page.screenshot({ path: join(artifacts, 'startup.png') })
+        throw error
+      }
+      await expect(previewCanvas).toBeVisible()
+      await expectColor(previewCanvas, [50, 184, 255, 255])
+      const source = await readFile(join(import.meta.dirname, '../../src/main.ts'), 'utf8')
+      expect(navigationErrors(errors)).toEqual([])
+      const resourceCounts = async (): Promise<{ contexts: number; timers: number }> => {
+        const worker = page.workers().find((worker) => worker.url().includes('/preview-sandbox-worker/'))
+        if (!worker) throw new Error('Sandbox worker is missing')
+        return worker.evaluate(() => {
+          const resources = Object.getOwnPropertyDescriptor(globalThis, '__threejsTestResources')?.value
+          return { contexts: resources.contexts.size, timers: resources.timers.size }
+        })
+      }
+      const contextsCount = async (): Promise<number> => {
+        const counts = await resourceCounts()
+        return counts.contexts
+      }
+      await expect.poll(contextsCount).toBe(1)
+      const initialResources = await resourceCounts()
+      const initialTimers = initialResources.timers
+      await replaceSource(page, `${source}\nexport const typeMismatch: number = "invalid"\nexport type Unsafe = any\nPromise.resolve()\n`, false)
+      await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain("Type 'string' is not assignable to type 'number'")
+      await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain('Unexpected any')
+      await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain('Promises must be awaited')
+      await replaceSource(page, source, false)
+      await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toBe('[]')
+
+      await replaceSource(page, source.replace('#32b8ff', '#ff0000'))
+      await expectColor(previewCanvas, [255, 0, 0, 255])
+      await replaceSource(page, source.replace('#32b8ff', '#00ff00'))
+      await replaceSource(page, source.replace('#32b8ff', '#0000ff'))
+      await expectColor(previewCanvas, [0, 0, 255, 255])
+
+      await replaceSource(page, `${source}\nconst =\n`)
+      await expect(page.getByText(/Build failed:/).first()).toBeVisible()
+      await expectColor(previewCanvas, [0, 0, 255, 255])
+      await replaceSource(page, source)
+      await expectColor(previewCanvas, [50, 184, 255, 255])
+
+      for (let iteration = 0; iteration < 20; iteration++) {
+        const red = iteration % 2 === 0
+        await replaceSource(
+          page,
+          source.replace('#32b8ff', () => (red ? '#ff0000' : '#00ff00')),
+        )
+        await expectColor(previewCanvas, red ? [255, 0, 0, 255] : [0, 255, 0, 255])
+        await expect.poll(contextsCount).toBe(1)
+        await expect
+          .poll(async () => {
+            const counts = await resourceCounts()
+            return counts.timers <= initialTimers + 1
+          })
+          .toBe(true)
+        expect(page.workers().filter((worker) => worker.url().includes('/preview-sandbox-worker/'))).toHaveLength(1)
+      }
+      expect(errors.filter((error) => error.includes('Too many active WebGL contexts'))).toEqual([])
+
+      await page.reload()
+      await expect(sourceFirstLine).toBeVisible()
+      await expect(previewCanvas).toBeVisible()
+      await expectColor(previewCanvas, [50, 184, 255, 255])
+      expect(navigationErrors(errors)).toEqual([])
+      for (let iteration = 0; iteration < 2; iteration++) {
+        await page.evaluate(() => {
+          const settings = JSON.parse(globalThis.localStorage.getItem('settings') || '{}')
+          settings['application.useOnLoadJson'] = false
+          globalThis.localStorage.setItem('settings', JSON.stringify(settings))
+        })
+        await page.reload()
+        await expect(sourceFirstLine).toBeVisible()
+        await expect(previewCanvas).toBeVisible()
+        await expectColor(previewCanvas, [50, 184, 255, 255])
+        await replaceSource(page, `${source}\nexport const typeMismatch: number = "invalid"\n`, false)
+        await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain("Type 'string' is not assignable to type 'number'")
+        await replaceSource(page, source.replace('#32b8ff', '#ff0000'))
+        await expectColor(previewCanvas, [255, 0, 0, 255])
+        await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toBe('[]')
+        expect(navigationErrors(errors)).toEqual([])
+      }
+      const stableSource = source.replace('cube.rotation.y += 0.01', 'cube.rotation.y += 0')
+      await replaceSource(page, stableSource)
+      await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toBe('[]')
+      const previewBounds = await previewCanvas.boundingBox()
+      if (!previewBounds) throw new Error('Preview canvas has no bounding box')
+      const dragStart = await previewCanvas.screenshot()
+      await page.mouse.move(previewBounds.x + previewBounds.width / 2, previewBounds.y + previewBounds.height / 2)
+      await page.mouse.down()
+      await page.mouse.move(previewBounds.x + previewBounds.width * 0.7, previewBounds.y + previewBounds.height / 2, { steps: 5 })
+      await page.mouse.up()
+      await expectImageChanged(previewCanvas, dragStart)
+      const zoomStart = await previewCanvas.screenshot()
+      await page.mouse.move(previewBounds.x + previewBounds.width / 2, previewBounds.y + previewBounds.height / 2)
+      await page.mouse.wheel(0, -300)
+      await expectImageChanged(previewCanvas, zoomStart)
+      expect(await page.evaluate(() => (globalThis as unknown as { scrollY: number }).scrollY)).toBe(0)
+      const panStart = await previewCanvas.screenshot()
+      await page.mouse.move(previewBounds.x + previewBounds.width / 2, previewBounds.y + previewBounds.height / 2)
+      await page.mouse.down({ button: 'right' })
+      await page.mouse.move(previewBounds.x + previewBounds.width * 0.7, previewBounds.y + previewBounds.height * 0.7, { steps: 5 })
+      await page.mouse.up({ button: 'right' })
+      await expectImageChanged(previewCanvas, panStart)
+      expect(errors.filter((error) => error.includes('setPointerCapture is not a function'))).toEqual([])
+      expect(errors.filter((error) => error.includes('Failed to hash ESLint files in one batch'))).toEqual([])
+    } catch (error) {
+      const artifacts = join(staticRoot, '..', 'e2e-artifacts')
+      await mkdir(artifacts, { recursive: true })
+      await writeFile(join(artifacts, 'failure-errors.json'), JSON.stringify(errors, null, 2))
+      const page = browser.contexts()[0]?.pages()[0]
+      if (page) {
+        await writeFile(join(artifacts, 'failure.html'), await page.content())
+        await page.screenshot({ path: join(artifacts, 'failure.png') })
+      }
+      throw error
+    } finally {
+      await browser.close()
+    }
   }
-  const stableSource = source.replace('cube.rotation.y += 0.01', 'cube.rotation.y += 0')
-  await replaceSource(page, stableSource)
-  await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toBe('[]')
-  const previewBounds = await previewCanvas.boundingBox()
-  if (!previewBounds) throw new Error('Preview canvas has no bounding box')
-  const dragStart = await previewCanvas.screenshot()
-  await page.mouse.move(previewBounds.x + previewBounds.width / 2, previewBounds.y + previewBounds.height / 2)
-  await page.mouse.down()
-  await page.mouse.move(previewBounds.x + previewBounds.width * 0.7, previewBounds.y + previewBounds.height / 2, { steps: 5 })
-  await page.mouse.up()
-  await expectImageChanged(previewCanvas, dragStart)
-  const zoomStart = await previewCanvas.screenshot()
-  await page.mouse.move(previewBounds.x + previewBounds.width / 2, previewBounds.y + previewBounds.height / 2)
-  await page.mouse.wheel(0, -300)
-  await expectImageChanged(previewCanvas, zoomStart)
-  expect(await page.evaluate(() => (globalThis as unknown as { scrollY: number }).scrollY)).toBe(0)
-  const panStart = await previewCanvas.screenshot()
-  await page.mouse.move(previewBounds.x + previewBounds.width / 2, previewBounds.y + previewBounds.height / 2)
-  await page.mouse.down({ button: 'right' })
-  await page.mouse.move(previewBounds.x + previewBounds.width * 0.7, previewBounds.y + previewBounds.height * 0.7, { steps: 5 })
-  await page.mouse.up({ button: 'right' })
-  await expectImageChanged(previewCanvas, panStart)
-  expect(errors.filter((error) => error.includes('setPointerCapture is not a function'))).toEqual([])
-  expect(errors.filter((error) => error.includes('Failed to hash ESLint files in one batch'))).toEqual([])
-} catch (error) {
-  const artifacts = join(staticRoot, '..', 'e2e-artifacts')
-  await mkdir(artifacts, { recursive: true })
-  await writeFile(join(artifacts, 'failure-errors.json'), JSON.stringify(errors, null, 2))
-  const page = browser.contexts()[0]?.pages()[0]
-  if (page) {
-    await writeFile(join(artifacts, 'failure.html'), await page.content())
-    await page.screenshot({ path: join(artifacts, 'failure.png') })
-  }
-  throw error
 } finally {
-  await browser.close()
   server.close()
 }

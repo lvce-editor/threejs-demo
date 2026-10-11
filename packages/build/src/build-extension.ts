@@ -30,8 +30,9 @@ await esbuild.build({
 })
 await cp(join(dirname(require.resolve('esbuild-wasm')), '..', 'esbuild.wasm'), join(outputDirectory, 'esbuild.wasm'))
 
+const tooling = await workspaceTooling()
 const files: Record<string, string> = {
-  ...(await workspaceTooling()),
+  ...tooling,
   '/src/main.ts': await readFile(join(root, 'src', 'main.ts'), 'utf8'),
   '/index.html': await readFile(join(root, 'index.html'), 'utf8'),
   '/package.json': JSON.stringify({
@@ -44,9 +45,25 @@ const files: Record<string, string> = {
     join(root, 'node_modules/three/examples/jsm/controls/OrbitControls.js'),
     'utf8',
   ),
+  // Keep dependency declarations out of the editor language host's explicit root-file list.
+  '/workspace-types.json': JSON.stringify({
+    // The browser ESLint worker preloads explicitly listed declarations from node_modules.
+    files: Object.keys(tooling)
+      .filter((path) => /\.d\.(?:ts|mts|cts)$/.test(path))
+      .map((path) => path.slice(1)),
+  }),
   '/tsconfig.json': JSON.stringify({
-    compilerOptions: { target: 'es2022', module: 'esnext', moduleResolution: 'bundler', strict: true, skipLibCheck: true, noEmit: true },
+    compilerOptions: {
+      target: 'es2022',
+      module: 'esnext',
+      moduleResolution: 'bundler',
+      strict: true,
+      skipLibCheck: true,
+      noEmit: true,
+    },
+    files: ['src/main.ts'],
     include: ['src'],
+    extends: './workspace-types.json',
   }),
 }
 await writeFile(join(outputDirectory, 'workspace.json'), `${JSON.stringify(files)}\n`)
