@@ -29,14 +29,19 @@ export const verifyFirefoxCompilerWarnings = async (url: string): Promise<void> 
     const workspaceResponse = await fetch(workspaceUrl)
     if (!workspaceResponse.ok) throw new Error(`Workspace request failed: ${workspaceResponse.status}`)
     const workspace = await workspaceResponse.json()
-    const source = workspace['/node_modules/typescript-eslint/index.cjs']
-    if (typeof source !== 'string') throw new Error('Bundled TypeScript ESLint source is missing')
+    const sources = ['/node_modules/typescript-eslint/index.cjs', '/node_modules/typescript/lib/typescript.js'].map((path) => {
+      const source = workspace[path]
+      if (typeof source !== 'string') throw new Error(`Bundled compiler source is missing: ${path}`)
+      return source
+    })
     // Parse on a blank page: the product compiles this source in a worker with
     // its own CSP, rather than in the main page's restricted script context.
-    await page.evaluate((source) => {
-      // eslint-disable-next-line @typescript-eslint/no-implied-eval, sonarjs/code-eval -- same parser used by the ESLint evaluator
-      new Function(source)
-    }, source)
+    for (const source of sources) {
+      await page.evaluate((source) => {
+        // eslint-disable-next-line @typescript-eslint/no-implied-eval, sonarjs/code-eval -- same parser used by the ESLint evaluator
+        new Function(source)
+      }, source)
+    }
     const compilerResponse = await fetch(compilerUrl)
     if (!compilerResponse.ok) throw new Error(`Compiler request failed: ${compilerResponse.status}`)
     const compilerSource = await compilerResponse.text()

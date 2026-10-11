@@ -50,7 +50,59 @@ config.syntaxHighlightingWorkerUrl ||=
   config.workerUrls['develop.syntaxHighlightingWorkerPath'] || config.workerUrls['developer.syntaxHighlightingWorkerPath']
 if (!config.syntaxHighlightingWorkerUrl) throw new Error('Exported syntax highlighting worker URL not found')
 const configuredIndex = index.replace(configMatch[0], `${configMatch[1]}${JSON.stringify(config)}${configMatch[3]}`)
-await writeFile(indexPath, configuredIndex.replace('</head>', `<script src="/threejs-demo/demo-startup.js"></script>\n</head>`))
+const rendererProcessUrl = `${config.assetDir}/packages/renderer-process/dist/rendererProcessMain.js`
+// These fixed resources are otherwise requested serially while opening the editor.
+const startupPreloads = [
+  rendererProcessUrl,
+  `${config.assetDir}/packages/extension-management-worker/dist/extensionManagementWorkerMain.js`,
+  `${config.assetDir}/packages/file-system-worker/dist/fileSystemWorkerMain.js`,
+  `${config.assetDir}/packages/main-area-worker/dist/mainAreaWorkerMain.js`,
+  `${config.assetDir}/config/extensions.json`,
+  `${config.assetDir}/config/onLoadCommands.json`,
+  `${config.assetDir}/extensions/builtin.theme-slime/color-theme.json`,
+  `${config.assetDir}/extensions/builtin.threejs-demo/dist/workspace-preview.json`,
+]
+  .map((url) => `<link rel="preload" as="fetch" crossorigin href="${url}">`)
+  .join('\n')
+await writeFile(
+  indexPath,
+  configuredIndex
+    .replace(`src="${rendererProcessUrl}"`, 'src="/threejs-demo/demo-main.js"')
+    .replace('</head>', `${startupPreloads}\n<script src="/threejs-demo/demo-startup.js"></script>\n</head>`),
+)
+// Pages cannot configure response headers. Establish isolation before starting
+// the editor so TypeScript uses its shared-memory transport, including Firefox.
+await writeFile(
+  join(root, 'dist', 'demo-main.js'),
+  `if (!crossOriginIsolated) {
+  await navigator.serviceWorker.register('/threejs-demo/demo-isolation.js', { scope: '/threejs-demo/' })
+  await navigator.serviceWorker.ready
+  if (!navigator.serviceWorker.controller) {
+    await new Promise(resolve => navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true }))
+  }
+  location.reload()
+} else {
+  await import(${JSON.stringify(rendererProcessUrl)})
+}
+`,
+)
+await writeFile(
+  join(root, 'dist', 'demo-isolation.js'),
+  `self.addEventListener('install', event => event.waitUntil(self.skipWaiting()))
+self.addEventListener('activate', event => event.waitUntil(self.clients.claim()))
+self.addEventListener('fetch', event => {
+  if (new URL(event.request.url).origin !== self.location.origin) return
+  event.respondWith((async () => {
+    const response = await fetch(event.request)
+    if (response.status === 0) return response
+    const headers = new Headers(response.headers)
+    headers.set('Cross-Origin-Opener-Policy', 'same-origin')
+    headers.set('Cross-Origin-Embedder-Policy', 'require-corp')
+    return new Response(response.body, { headers, status: response.status, statusText: response.statusText })
+  })())
+})
+`,
+)
 
 // This exported application always runs on the web, including eager module initialization.
 const rendererPath = join(root, 'dist', commitHash, 'packages', 'renderer-worker', 'dist', 'rendererWorkerMain.js')
@@ -101,7 +153,7 @@ const demoStartup = `try {
 `
 await writeFile(join(root, 'dist', 'demo-startup.js'), demoStartup)
 
-for (const name of ['renderer-process', 'preview-sandbox-worker', 'preview-worker']) {
+for (const name of ['renderer-process', 'preview-sandbox-worker', 'preview-worker', 'extension-management-worker']) {
   await cp(new URL('./', import.meta.resolve(`@lvce-editor/${name}`)), join(root, 'dist', commitHash, 'packages', name, 'dist'), {
     force: true,
     recursive: true,
@@ -110,7 +162,35 @@ for (const name of ['renderer-process', 'preview-sandbox-worker', 'preview-worke
 
 const extensionId = 'builtin.threejs-demo'
 await installExtension('eslint', '1.25.3', commitHash)
+const eslintExtensionPath = join(root, 'dist', commitHash, 'extensions', 'builtin.eslint', 'dist', 'eslintMain.js')
+const eslintExtension = await readFile(eslintExtensionPath, 'utf8')
+// The verified initial scene returns before this hook; edited text needs all tooling.
+const lintEditedText = "    const {\n      text\n    } = textDocument;\n    const filePath = textDocument.uri ?? 'file.js';"
+if (!eslintExtension.includes(lintEditedText) || !eslintExtension.includes('const executeCommand$1 = async'))
+  throw new Error('ESLint edited document hook not found')
+await writeFile(
+  eslintExtensionPath,
+  eslintExtension.replace(lintEditedText, `    await executeCommand$1('threejs.prepareLanguageFeatures');\n${lintEditedText}`),
+)
 await installExtension('language-features-typescript', '5.33.0', commitHash)
+// Early completion requests must not snapshot a partially installed virtual project.
+const languageExtensionPath = join(
+  root,
+  'dist',
+  commitHash,
+  'extensions',
+  'builtin.language-features-typescript',
+  'dist',
+  'languageFeaturesTypeScriptMain.js',
+)
+const languageExtension = await readFile(languageExtensionPath, 'utf8')
+const launchWorker = 'const launchTypeScriptWorker = async () => {'
+if (!languageExtension.includes(launchWorker) || !languageExtension.includes('const executeCommand$1 = async'))
+  throw new Error('TypeScript worker startup hook not found')
+await writeFile(
+  languageExtensionPath,
+  languageExtension.replace(launchWorker, `${launchWorker}\n  await executeCommand$1('threejs.prepareLanguageFeatures');`),
+)
 const compilerPath = join(root, 'dist', commitHash, 'extensions', 'builtin.language-features-typescript', 'typescript', 'lib', 'typescript-esm.js')
 await writeFile(compilerPath, removeUnreachableTypeScriptCode(await readFile(compilerPath, 'utf8')))
 await cp(join(root, 'packages', 'extension', 'dist'), join(root, 'dist', commitHash, 'extensions', extensionId, 'dist'), {

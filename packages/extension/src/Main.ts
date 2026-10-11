@@ -8,6 +8,7 @@ import {
   writeFile,
 } from '@lvce-editor/api'
 import { createCompiler } from './Compiler.ts'
+import { createInitialBuild } from './InitialBuild.ts'
 import { createRebuilder } from './Rebuilder.ts'
 
 const workspace = 'memfs:///threejs'
@@ -15,8 +16,9 @@ const state: {
   initialized: boolean
   previewOpened?: boolean
   rebuild?: () => Promise<void>
+  disposeCompiler?: () => Promise<void>
+  warmCompiler?: () => Promise<string>
   changeSubscription?: { dispose: () => void }
-  dependencyFiles?: [string, string][]
   workspaceReady?: Promise<void>
 } = {
   initialized: false,
@@ -28,17 +30,15 @@ const writeWorkspaceFiles = async (entries: [string, string][]): Promise<void> =
   }
 }
 
-const getWorkspaceFiles = async (): Promise<[string, string][]> => {
-  const response = await fetch(new URL('workspace.json', import.meta.url))
+const getWorkspaceFiles = async (name: string = 'workspace.json'): Promise<[string, string][]> => {
+  const response = await fetch(new URL(name, import.meta.url))
   if (!response.ok) throw new Error(`Unable to load the demo workspace: ${response.status}`)
   return Object.entries((await response.json()) as Record<string, string>)
 }
 
 const installWorkspaceDependencies = async (): Promise<void> => {
-  // Setting the workspace can restart the extension host after the seed command.
-  const entries = state.dependencyFiles || (await getWorkspaceFiles())
+  const entries = await getWorkspaceFiles()
   await writeWorkspaceFiles(entries.filter(([path]) => path.startsWith('/node_modules/')))
-  delete state.dependencyFiles
 }
 
 const completeWorkspace = async (): Promise<void> => {
@@ -46,32 +46,37 @@ const completeWorkspace = async (): Promise<void> => {
   await state.workspaceReady
 }
 
+const prepareLanguageFeatures = async (): Promise<void> => {
+  await completeWorkspace()
+  if (!state.initialized) return
+  await executeCommand('ExtensionManagement.activateByEvent', 'onDiagnostic:typescript')
+  await executeCommand('GetActiveEditor.updateDiagnostics')
+  void state.warmCompiler?.().catch(() => {})
+}
+
 const initializeWorkspace = async (): Promise<void> => {
   if (await exists(`${workspace}/src/main.ts`)) {
     return
   }
 
-  const entries = await getWorkspaceFiles()
-  state.dependencyFiles = entries.filter(([path]) => path.startsWith('/node_modules/'))
-  await writeWorkspaceFiles(entries.filter(([path]) => !path.startsWith('/node_modules/')))
+  // Avoid downloading the compiler and declarations before showing the editor.
+  await writeWorkspaceFiles(await getWorkspaceFiles('workspace-preview.json'))
 }
 
 const openDemo = async (): Promise<void> => {
   await initializeWorkspace()
   if (!state.initialized) {
     const compile = createCompiler()
+    state.disposeCompiler = compile.dispose
+    state.warmCompiler = (): Promise<string> => compile((path) => readFile(`${workspace}${path}`))
     state.rebuild = createRebuilder({
-      build: () => compile((path) => readFile(`${workspace}${path}`)),
+      build: createInitialBuild(compile, (path) => readFile(`${workspace}${path}`)),
       publish: async (code) => {
         await writeFile(`${workspace}/dist/main.js`, code)
         if (state.previewOpened) await executeCommand('SimpleBrowser.reload')
         else {
           await executeCommand('Layout.showPreview', `${workspace}/index.html`)
           state.previewOpened = true
-          await completeWorkspace()
-          await executeCommand('ExtensionManagement.activateByEvent', 'onDiagnostic:typescript')
-          await executeCommand('Preferences.update', { 'editor.diagnostics': true })
-          await executeCommand('GetActiveEditor.updateDiagnostics')
         }
       },
       reportError: async (error) => {
@@ -87,25 +92,29 @@ const openDemo = async (): Promise<void> => {
     })
   }
   await executeCommand('Main.closeAllEditors')
-  await executeCommand('Preferences.update', { 'editor.diagnostics': false })
+  await executeCommand('Preferences.update', { 'editor.diagnostics': true })
   await executeCommand('Layout.showMain')
   await executeCommand('Main.openUri', `${workspace}/src/main.ts`)
-  await completeWorkspace()
   await state.rebuild?.()
-  await executeCommand('Main.openUri', `${workspace}/src/main.ts`)
+  await executeCommand('Main.focus')
   await executeCommand('Layout.hidePanel')
   await executeCommand('Layout.hideSideBar')
   await executeCommand('Layout.hideActivityBar')
   await executeCommand('Layout.hideStatusBar')
   await executeCommand('Layout.hideTitleBar')
+  // Prepare tooling after the initial layout is visible.
+  void prepareLanguageFeatures().catch((error) => console.error(error))
 }
 
 export const activate = async (): Promise<void> => {
   await activateExtensionApi()
   registerCommand({ execute: initializeWorkspace, id: 'threejs.initializeWorkspace' })
+  registerCommand({ execute: completeWorkspace, id: 'threejs.prepareLanguageFeatures' })
   registerCommand({ execute: openDemo, id: 'threejs.openDemo' })
 }
 
-export const deactivate = (): void => {
+export const deactivate = async (): Promise<void> => {
+  state.initialized = false
   state.changeSubscription?.dispose()
+  await state.disposeCompiler?.()
 }

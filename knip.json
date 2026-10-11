@@ -7,7 +7,12 @@
     },
     "packages/build": {
       "project": ["src/**/*.ts"],
-      "ignoreDependencies": ["@lvce-editor/preview-sandbox-worker", "@lvce-editor/preview-worker", "@lvce-editor/renderer-process"]
+      "ignoreDependencies": [
+        "@lvce-editor/extension-management-worker",
+        "@lvce-editor/preview-sandbox-worker",
+        "@lvce-editor/preview-worker",
+        "@lvce-editor/renderer-process"
+      ]
     },
     "packages/e2e": {
       "entry": ["threejs.static-site.ts"],

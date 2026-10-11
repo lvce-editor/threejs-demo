@@ -48,11 +48,23 @@ jobs:
         working-directory: packages/e2e
         env:
           PLAYWRIGHT_BROWSERS_PATH: 0
-      - run: npm run e2e:headless
+      - run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            xvfb-run --auto-servernum npm run e2e:headless
+          else
+            npm run e2e:headless
+          fi
+        shell: bash
         env:
           PLAYWRIGHT_BROWSERS_PATH: 0
       - name: Test Pages latency
-        run: npm run e2e:headless --workspace=packages/e2e
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            xvfb-run --auto-servernum npm run e2e:headless --workspace=packages/e2e
+          else
+            npm run e2e:headless --workspace=packages/e2e
+          fi
+        shell: bash
         env:
           PLAYWRIGHT_BROWSERS_PATH: 0
           THREEJS_DEMO_LATENCY_MS: 150
