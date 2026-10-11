@@ -11,6 +11,7 @@ export const compileScene = async (
     bundle: true,
     entryPoints: ['/src/main.ts'],
     format: 'iife',
+    minifyWhitespace: true,
     platform: 'browser',
     plugins: [
       {

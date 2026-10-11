@@ -21,19 +21,25 @@ await esbuild.build({
   sourcemap: true,
   target: 'esnext',
 })
-await esbuild.build({
+// Keep the fixed npm library outside the editable scene's rebuild graph.
+const dependencies = await esbuild.build({
   bundle: true,
   entryPoints: [join(dirname(require.resolve('three')), 'three.module.js')],
-  format: 'esm',
+  format: 'iife',
+  globalName: '__threejsDependencies',
   platform: 'browser',
-  outfile: join(outputDirectory, 'three.js'),
   minify: true,
+  write: false,
 })
+const threeExports = Object.keys(await import('three'))
+const threeModule = threeExports.map((name) => 'export const ' + name + ' = window.__threejsDependencies.' + name).join('\n')
+await writeFile(join(outputDirectory, 'three.js'), threeModule)
 await cp(join(dirname(require.resolve('esbuild-wasm')), '..', 'esbuild.wasm'), join(outputDirectory, 'esbuild.wasm'))
 
 const tooling = await workspaceTooling()
 const files: Record<string, string> = {
   ...tooling,
+  '/dist/three-dependencies.js': dependencies.outputFiles[0].text,
   '/src/main.ts': await readFile(join(root, 'src', 'main.ts'), 'utf8'),
   '/index.html': await readFile(join(root, 'index.html'), 'utf8'),
   '/package.json': JSON.stringify(
@@ -81,11 +87,20 @@ const initialScene = await esbuild.build({
   bundle: true,
   entryPoints: [join(root, 'src', 'main.ts')],
   format: 'iife',
+  minifyWhitespace: true,
   platform: 'browser',
   target: 'es2022',
   treeShaking: true,
-  minify: true,
   write: false,
+  plugins: [
+    {
+      name: 'threejs-runtime',
+      setup(build): void {
+        build.onResolve({ filter: /^three$/ }, () => ({ namespace: 'runtime-three', path: 'three' }))
+        build.onLoad({ filter: /.*/, namespace: 'runtime-three' }, () => ({ contents: threeModule, loader: 'js' }))
+      },
+    },
+  ],
 })
 files['/dist/main.js'] = initialScene.outputFiles[0].text
 files['/dist/main.source.ts'] = files['/src/main.ts']
