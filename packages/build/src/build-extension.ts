@@ -39,7 +39,7 @@ const files: Record<string, string> = {
     type: 'module',
     dependencies: { three: JSON.parse(await readFile(join(root, 'node_modules/three/package.json'), 'utf8')).version },
     devDependencies: { '@types/three': JSON.parse(await readFile(join(root, 'node_modules/@types/three/package.json'), 'utf8')).version },
-  }),
+  }, null, 2),
   '/node_modules/three/examples/jsm/controls/OrbitControls.js': await readFile(
     join(root, 'node_modules/three/examples/jsm/controls/OrbitControls.js'),
     'utf8',
