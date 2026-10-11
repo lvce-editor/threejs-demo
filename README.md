@@ -7,6 +7,8 @@ opens `src/main.ts` beside a live preview. Saving rebuilds `dist/main.js` with
 esbuild-wasm in the browser. TypeScript and ESLint diagnostics run through the
 editor's extensions.
 
+![Lvce Editor showing the Three.js demo source beside a live rotating cube preview](docs/images/threejs-demo.png)
+
 The starting scene is a rotating cube. Change `cubeColor` in `src/main.ts` and
 save to see the new color. A compilation error keeps the last successful preview;
 correct the source and save to recover.
