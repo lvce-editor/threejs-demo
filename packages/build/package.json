@@ -12,6 +12,6 @@
     "@lvce-editor/extension-management-worker": "^4.88.3",
     "@lvce-editor/preview-sandbox-worker": "^4.17.3",
     "@lvce-editor/preview-worker": "^6.18.5",
-    "@lvce-editor/renderer-process": "^30.69.0"
+    "@lvce-editor/renderer-process": "^30.69.1"
   }
 }
