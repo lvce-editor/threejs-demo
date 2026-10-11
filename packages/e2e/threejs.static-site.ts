@@ -82,6 +82,21 @@ const handleRequest = async (request: IncomingMessage, response: ServerResponse)
   try {
     let content = await readFile(filePath)
     if (filePath.endsWith(`${sep}${sandboxWorkerPathSuffix}`)) {
+      const dispatch = 'const dispatchEvent = (element, event) => {'
+      const source = content.toString()
+      if (!source.includes(dispatch)) throw new Error('Sandbox pointer trace seam is missing')
+      content = Buffer.from(
+        source.replace(
+          dispatch,
+          () => `${dispatch}
+        if (/^(pointer|wheel)/.test(event.type)) {
+          const trace = globalThis.__threejsPointerTrace ||= []
+          trace.push({ type: event.type, target: element.id, x: event.clientX, y: event.clientY, button: event.button, buttons: event.buttons, time: Date.now() })
+          if (trace.length > 128) trace.shift()
+        }
+      `,
+        ),
+      )
       content = Buffer.concat([Buffer.from(sandboxInstrumentation), content])
     }
     response.writeHead(200, {
@@ -96,30 +111,19 @@ const handleRequest = async (request: IncomingMessage, response: ServerResponse)
 }
 
 const expectColor = async (canvas: Locator, color: readonly number[], timeout: number = 5000): Promise<void> => {
-  const started = performance.now()
-  const trace = (stage: string, detail: unknown = undefined): void => {
-    process.stdout.write(`scene-capture ${JSON.stringify({ color, detail, elapsed: performance.now() - started, stage })}\n`)
-  }
-  trace('start')
   await expect
     .poll(
       async () => {
-        trace('bounds-start')
         const bounds = await canvas.boundingBox()
-        trace('bounds-end', bounds)
         if (!bounds) return []
         // Capture the rendered region even if a refresh replaces the DOM node.
-        trace('screenshot-start')
         const bitmap = PNG.sync.read(await canvas.page().screenshot({ clip: bounds }))
         const offset = (Math.floor(bitmap.height / 2) * bitmap.width + Math.floor(bitmap.width / 2)) * 4
-        const pixel = [...bitmap.data.subarray(offset, offset + 4)]
-        trace('screenshot-end', pixel)
-        return pixel
+        return [...bitmap.data.subarray(offset, offset + 4)]
       },
       { timeout },
     )
     .toEqual(color)
-  trace('passed')
 }
 
 const screenshotCanvas = async (canvas: Locator): Promise<Buffer | undefined> => {
@@ -258,7 +262,6 @@ try {
     errors.push(error.stack || error.message)
   })
   page.on('console', (message) => {
-    if (message.text().includes('[threejs-build]')) process.stdout.write(`${message.text()}\n`)
     if (message.type() === 'error' || message.type() === 'warning') errors.push(message.text())
   })
   page.on('response', (response) => {
@@ -281,6 +284,26 @@ try {
   const errorView = page.locator('.ViewletErrorMessage')
 
   await page.addInitScript(() => {
+    const pointerTrace: unknown[] = []
+    Object.defineProperty(globalThis, '__threejsPointerTrace', { value: pointerTrace })
+    for (const type of ['pointerdown', 'pointermove', 'pointerup', 'wheel']) {
+      document.addEventListener(
+        type,
+        (event) => {
+          const pointer = event as PointerEvent
+          pointerTrace.push({
+            buttons: pointer.buttons,
+            target: (pointer.target as HTMLElement)?.id,
+            time: Date.now(),
+            type,
+            x: pointer.clientX,
+            y: pointer.clientY,
+          })
+          if (pointerTrace.length > 128) pointerTrace.shift()
+        },
+        { capture: true },
+      )
+    }
     const startup = { visibleBars: [] as string[] }
     Object.defineProperty(globalThis, '__threejsStartup', { value: startup })
     const observe = (): void => {
@@ -479,28 +502,9 @@ try {
   const completionSelection = [completionRow, 9, completionRow, 9]
   await rendererCommand(page, 'GetActiveEditor.setSelections', [completionSelection])
   await expect.poll(() => rendererCommand(page, 'GetActiveEditor.getSelections')).toEqual(completionSelection)
-  process.stdout.write(
-    `completion-before ${JSON.stringify({
-      document: await rendererCommand(page, 'GetActiveEditor.getTextDocument'),
-      focused: await page.locator('.Editor textarea').evaluate((element) => element === document.activeElement),
-      selections: await rendererCommand(page, 'GetActiveEditor.getSelections'),
-    })}\n`,
-  )
   await page.keyboard.press('Control+Space')
   const completionItem = page.locator('.EditorCompletionItem').filter({ hasText: 'autoClear' }).first()
-  try {
-    await expect(completionItem).toBeVisible({ timeout: 30_000 })
-  } catch (error) {
-    process.stdout.write(
-      `completion-failure ${JSON.stringify({
-        diagnostics: await diagnostics(page),
-        document: await rendererCommand(page, 'GetActiveEditor.getTextDocument'),
-        selections: await rendererCommand(page, 'GetActiveEditor.getSelections'),
-        suggestions: await page.getByRole('listbox', { name: 'Suggest' }).textContent(),
-      })}\n`,
-    )
-    throw error
-  }
+  await expect(completionItem).toBeVisible({ timeout: 30_000 })
   expect(page.workers().filter((worker) => worker.url().endsWith('/typescriptWorkerMain.js'))).toHaveLength(1)
   await page.keyboard.press('Escape')
   await page.setViewportSize({ height: 700, width: 1000 })
@@ -520,6 +524,16 @@ try {
   await writeFile(join(artifacts, 'failure-errors.json'), JSON.stringify(errors, null, 2))
   const page = browser.contexts()[0]?.pages()[0]
   if (page) {
+    const pointers = {
+      native: await page.evaluate(() => Object.getOwnPropertyDescriptor(globalThis, '__threejsPointerTrace')?.value),
+      sandbox: await Promise.all(
+        page
+          .workers()
+          .filter((worker) => worker.url().includes('/preview-sandbox-worker/'))
+          .map((worker) => worker.evaluate(() => Object.getOwnPropertyDescriptor(globalThis, '__threejsPointerTrace')?.value)),
+      ),
+    }
+    await writeFile(join(artifacts, 'failure-pointers.json'), JSON.stringify(pointers, null, 2))
     await writeFile(join(artifacts, 'failure.html'), await page.content())
     await page.screenshot({ path: join(artifacts, 'failure.png') })
   }
