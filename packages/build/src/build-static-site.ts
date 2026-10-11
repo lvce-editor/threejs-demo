@@ -49,7 +49,20 @@ config.previewOutputEnabled = false
 config.syntaxHighlightingWorkerUrl ||=
   config.workerUrls['develop.syntaxHighlightingWorkerPath'] || config.workerUrls['developer.syntaxHighlightingWorkerPath']
 if (!config.syntaxHighlightingWorkerUrl) throw new Error('Exported syntax highlighting worker URL not found')
-await writeFile(indexPath, index.replace(configMatch[0], `${configMatch[1]}${JSON.stringify(config)}${configMatch[3]}`))
+// This dedicated demo must seed memfs on every load, including profiles that
+// saved the editor's old useOnLoadJson=false default. Run before module startup
+// so restored memfs tabs are replaced by the initialized demo workspace.
+const demoStartup = `try {
+  const settings = JSON.parse(localStorage.getItem('settings') || '{}')
+  settings['application.useOnLoadJson'] = true
+  localStorage.setItem('settings', JSON.stringify(settings))
+} catch {
+  // Storage may be unavailable; the exported default still enables startup.
+}
+`
+await writeFile(join(root, 'dist', 'demo-startup.js'), demoStartup)
+const configuredIndex = index.replace(configMatch[0], `${configMatch[1]}${JSON.stringify(config)}${configMatch[3]}`)
+await writeFile(indexPath, configuredIndex.replace('</head>', `<script src="/threejs-demo/demo-startup.js"></script>\n</head>`))
 
 // This exported application always runs on the web, including eager module initialization.
 const rendererPath = join(root, 'dist', commitHash, 'packages', 'renderer-worker', 'dist', 'rendererWorkerMain.js')
