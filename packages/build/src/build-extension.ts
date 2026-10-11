@@ -35,12 +35,16 @@ const files: Record<string, string> = {
   ...tooling,
   '/src/main.ts': await readFile(join(root, 'src', 'main.ts'), 'utf8'),
   '/index.html': await readFile(join(root, 'index.html'), 'utf8'),
-  '/package.json': JSON.stringify({
-    name: 'threejs-hello-world',
-    type: 'module',
-    dependencies: { three: JSON.parse(await readFile(join(root, 'node_modules/three/package.json'), 'utf8')).version },
-    devDependencies: { '@types/three': JSON.parse(await readFile(join(root, 'node_modules/@types/three/package.json'), 'utf8')).version },
-  }),
+  '/package.json': JSON.stringify(
+    {
+      name: 'threejs-hello-world',
+      type: 'module',
+      dependencies: { three: JSON.parse(await readFile(join(root, 'node_modules/three/package.json'), 'utf8')).version },
+      devDependencies: { '@types/three': JSON.parse(await readFile(join(root, 'node_modules/@types/three/package.json'), 'utf8')).version },
+    },
+    null,
+    2,
+  ),
   '/node_modules/three/examples/jsm/controls/OrbitControls.js': await readFile(
     join(root, 'node_modules/three/examples/jsm/controls/OrbitControls.js'),
     'utf8',
@@ -52,18 +56,22 @@ const files: Record<string, string> = {
       .filter((path) => /\.d\.(?:ts|mts|cts)$/.test(path))
       .map((path) => path.slice(1)),
   }),
-  '/tsconfig.json': JSON.stringify({
-    compilerOptions: {
-      target: 'es2022',
-      module: 'esnext',
-      moduleResolution: 'bundler',
-      strict: true,
-      skipLibCheck: true,
-      noEmit: true,
+  '/tsconfig.json': JSON.stringify(
+    {
+      compilerOptions: {
+        target: 'es2022',
+        module: 'esnext',
+        moduleResolution: 'bundler',
+        strict: true,
+        skipLibCheck: true,
+        noEmit: true,
+      },
+      files: ['src/main.ts'],
+      include: ['src'],
+      extends: './workspace-types.json',
     },
-    files: ['src/main.ts'],
-    include: ['src'],
-    extends: './workspace-types.json',
-  }),
+    null,
+    2,
+  ),
 }
 await writeFile(join(outputDirectory, 'workspace.json'), `${JSON.stringify(files)}\n`)
