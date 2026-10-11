@@ -213,9 +213,8 @@ try {
   await expect.poll(contextsCount).toBe(1)
   const initialResources = await resourceCounts()
   const initialTimers = initialResources.timers
-  await replaceSource(page, `${source}\nexport const typeMismatch: number = "invalid"\n`, false)
+  await replaceSource(page, `${source}\nexport const typeMismatch: number = "invalid"\nexport type Unsafe = any\n`, false)
   await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain("Type 'string' is not assignable to type 'number'")
-  await replaceSource(page, `${source}\nexport type Unsafe = any\n`, false)
   await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain('Unexpected any')
   await replaceSource(page, source, false)
   await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toBe('[]')
