@@ -105,6 +105,26 @@ const expectColor = async (canvas: Locator, color: readonly number[]): Promise<v
     .toEqual(color)
 }
 
+const expectImageChanged = async (canvas: Locator, before: Buffer): Promise<void> => {
+  const original = PNG.sync.read(before)
+  await expect
+    .poll(async () => {
+      const current = PNG.sync.read(await canvas.screenshot())
+      let changedPixels = 0
+      for (let offset = 0; offset < original.data.length; offset += 4) {
+        if (
+          Math.abs(original.data[offset] - current.data[offset]) > 12 ||
+          Math.abs(original.data[offset + 1] - current.data[offset + 1]) > 12 ||
+          Math.abs(original.data[offset + 2] - current.data[offset + 2]) > 12
+        ) {
+          changedPixels++
+        }
+      }
+      return changedPixels
+    })
+    .toBeGreaterThan(100)
+}
+
 const replaceSource = async (page: Page, source: string, save: boolean = true): Promise<void> => {
   await page.locator('.Editor textarea').focus()
   await page.keyboard.press('Control+a')
@@ -176,6 +196,7 @@ try {
   }
   await expect(previewCanvas).toBeVisible()
   await expectColor(previewCanvas, [50, 184, 255, 255])
+  const source = await readFile(join(import.meta.dirname, '../../src/main.ts'), 'utf8')
   expect(navigationErrors(errors)).toEqual([])
   const resourceCounts = async (): Promise<{ contexts: number; timers: number }> => {
     const worker = page.workers().find((worker) => worker.url().includes('/preview-sandbox-worker/'))
@@ -192,7 +213,6 @@ try {
   await expect.poll(contextsCount).toBe(1)
   const initialResources = await resourceCounts()
   const initialTimers = initialResources.timers
-  const source = await readFile(join(import.meta.dirname, '../../src/main.ts'), 'utf8')
   await replaceSource(page, `${source}\nexport const typeMismatch: number = "invalid"\nexport type Unsafe = any\n`, false)
   await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain("Type 'string' is not assignable to type 'number'")
   await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain('Unexpected any')
@@ -234,7 +254,6 @@ try {
   await expect(previewCanvas).toBeVisible()
   await expectColor(previewCanvas, [50, 184, 255, 255])
   expect(navigationErrors(errors)).toEqual([])
-
   for (let iteration = 0; iteration < 2; iteration++) {
     await page.evaluate(() => {
       const settings = JSON.parse(globalThis.localStorage.getItem('settings') || '{}')
@@ -252,6 +271,29 @@ try {
     await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toBe('[]')
     expect(navigationErrors(errors)).toEqual([])
   }
+  const stableSource = source.replace('cube.rotation.y += 0.01', 'cube.rotation.y += 0')
+  await replaceSource(page, stableSource)
+  await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toBe('[]')
+  const previewBounds = await previewCanvas.boundingBox()
+  if (!previewBounds) throw new Error('Preview canvas has no bounding box')
+  const dragStart = await previewCanvas.screenshot()
+  await page.mouse.move(previewBounds.x + previewBounds.width / 2, previewBounds.y + previewBounds.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(previewBounds.x + previewBounds.width * 0.7, previewBounds.y + previewBounds.height / 2, { steps: 5 })
+  await page.mouse.up()
+  await expectImageChanged(previewCanvas, dragStart)
+  const zoomStart = await previewCanvas.screenshot()
+  await page.mouse.move(previewBounds.x + previewBounds.width / 2, previewBounds.y + previewBounds.height / 2)
+  await page.mouse.wheel(0, -300)
+  await expectImageChanged(previewCanvas, zoomStart)
+  expect(await page.evaluate(() => (globalThis as unknown as { scrollY: number }).scrollY)).toBe(0)
+  const panStart = await previewCanvas.screenshot()
+  await page.mouse.move(previewBounds.x + previewBounds.width / 2, previewBounds.y + previewBounds.height / 2)
+  await page.mouse.down({ button: 'right' })
+  await page.mouse.move(previewBounds.x + previewBounds.width * 0.7, previewBounds.y + previewBounds.height * 0.7, { steps: 5 })
+  await page.mouse.up({ button: 'right' })
+  await expectImageChanged(previewCanvas, panStart)
+  expect(errors.filter((error) => error.includes('setPointerCapture is not a function'))).toEqual([])
   expect(errors.filter((error) => error.includes('Failed to hash ESLint files in one batch'))).toEqual([])
 } catch (error) {
   const artifacts = join(staticRoot, '..', 'e2e-artifacts')

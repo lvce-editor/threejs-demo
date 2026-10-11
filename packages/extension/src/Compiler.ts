@@ -24,6 +24,9 @@ export const createCompiler = (): ((readSource: ReadSource) => Promise<string>) 
           setup(build): void {
             build.onResolve({ filter: /.*/ }, ({ importer, path }) => {
               if (path === 'three') return { namespace: 'three', path: 'three' }
+              if (path === 'three/addons/controls/OrbitControls.js') {
+                return { namespace: 'workspace', path: '/node_modules/three/examples/jsm/controls/OrbitControls.js' }
+              }
               if (importer && !path.startsWith('.')) return { errors: [{ text: `Unsupported package: ${path}` }] }
               return { namespace: 'workspace', path: new URL(path, `https://workspace${importer || '/'}`).pathname }
             })
