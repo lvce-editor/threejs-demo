@@ -113,15 +113,20 @@ const replaceSource = async (page: Page, source: string, save: boolean = true): 
   if (save) await page.keyboard.press('Control+s')
 }
 
-const diagnostics = async (page: Page): Promise<string> => {
+const rendererCommand = async (page: Page, command: string, args: unknown[] = []): Promise<unknown> => {
   const worker = page.workers().find((worker) => worker.url().includes('/renderer-worker/'))
   if (!worker) throw new Error('Renderer worker is not running')
   const entry = worker.url().replace('/renderer-worker/dist/rendererWorkerMain.js', '/renderer-process/dist/rendererProcessMain.js')
-  return page.evaluate(async (entry) => {
-    const renderer = await import(entry)
-    return JSON.stringify(await renderer.executeCommand('GetActiveEditor.getDiagnostics'))
-  }, entry)
+  return page.evaluate(
+    async ({ entry, command, args }) => {
+      const renderer = await import(entry)
+      return renderer.executeCommand(command, ...args)
+    },
+    { entry, command, args },
+  )
 }
+
+const diagnostics = async (page: Page): Promise<string> => JSON.stringify(await rendererCommand(page, 'GetActiveEditor.getDiagnostics'))
 
 const navigationErrors = (errors: readonly string[]): string[] => {
   return errors.filter((error) => error.includes('Cannot navigate to child: child not found at index'))
@@ -271,12 +276,9 @@ try {
   await assertLeanStartup()
   // Request completions without editing the newly reloaded, verified document.
   await page.locator('.Editor textarea').focus()
-  await page.keyboard.press('Control+Home')
-  for (let row = 0; row < 5; row++) await page.keyboard.press('ArrowDown')
-  await page.keyboard.press('Home')
-  for (let column = 0; column < 9; column++) await page.keyboard.press('ArrowRight')
+  await rendererCommand(page, 'GetActiveEditor.setSelections', [[5, 9, 5, 9]])
   await page.keyboard.press('Control+Space')
-  const completionItem = page.locator('.EditorCompletionItem').filter({ hasText: 'setSize' }).first()
+  const completionItem = page.locator('.EditorCompletionItem').filter({ hasText: 'autoClear' }).first()
   await expect(completionItem).toBeVisible({ timeout: 30_000 })
   expect(page.workers().filter((worker) => worker.url().endsWith('/typescriptWorkerMain.js'))).toHaveLength(1)
   await page.keyboard.press('Escape')
