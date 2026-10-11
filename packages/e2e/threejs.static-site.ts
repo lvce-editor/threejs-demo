@@ -142,6 +142,10 @@ const diagnostics = async (page: Page): Promise<string> => {
   }, entry)
 }
 
+const navigationErrors = (errors: readonly string[]): string[] => {
+  return errors.filter((error) => error.includes('Cannot navigate to child: child not found at index'))
+}
+
 const server = createServer((request, response) => {
   void handleRequest(request, response)
 })
@@ -193,6 +197,7 @@ try {
   await expect(previewCanvas).toBeVisible()
   await expectColor(previewCanvas, [50, 184, 255, 255])
   const source = await readFile(join(import.meta.dirname, '../../src/main.ts'), 'utf8')
+  expect(navigationErrors(errors)).toEqual([])
   const resourceCounts = async (): Promise<{ contexts: number; timers: number }> => {
     const worker = page.workers().find((worker) => worker.url().includes('/preview-sandbox-worker/'))
     if (!worker) throw new Error('Sandbox worker is missing')
@@ -249,6 +254,7 @@ try {
   await expect(sourceFirstLine).toBeVisible()
   await expect(previewCanvas).toBeVisible()
   await expectColor(previewCanvas, [50, 184, 255, 255])
+  expect(navigationErrors(errors)).toEqual([])
   const stableSource = source.replace('cube.rotation.y += 0.01', 'cube.rotation.y += 0')
   await replaceSource(page, stableSource)
   await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toBe('[]')
