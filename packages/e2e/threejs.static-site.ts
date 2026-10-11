@@ -8,6 +8,8 @@ import { PNG } from 'pngjs'
 import { verifyFirefoxCompilerWarnings } from './firefoxCompilerWarnings.ts'
 import { measureStartup } from './startupMetrics.ts'
 
+// Temporary evidence mode; normal acceptance commands never pass this flag.
+const captureColdDiagnostics = process.argv.includes('--capture-cold-diagnostics')
 const responseDelay = Number(process.env.THREEJS_DEMO_LATENCY_MS || 0)
 if (!Number.isSafeInteger(responseDelay) || responseDelay < 0) throw new Error('THREEJS_DEMO_LATENCY_MS must be a nonnegative integer')
 const pathPrefix = '/threejs-demo'
@@ -214,7 +216,8 @@ if (!address || typeof address === 'string') {
 }
 
 try {
-  for (const browserType of [chromium, firefox]) {
+  const browsers = captureColdDiagnostics ? [firefox, firefox, firefox] : [chromium, firefox]
+  for (const browserType of browsers) {
     // Firefox otherwise blocklists WebGL2 on GPU-less CI runners.
     const headless = !(browserType === firefox && process.platform === 'linux' && process.env.DISPLAY)
     const browser = await browserType.launch({ firefoxUserPrefs: { 'webgl.force-enabled': true }, headless })
@@ -292,9 +295,9 @@ try {
         // The bootstrap document installs isolation and reloads before opening the editor.
         const isolatedDocument = await page.waitForFunction(() => globalThis.crossOriginIsolated, undefined, { timeout: 5000 })
         await isolatedDocument.dispose()
-        await expect(sourceFirstLine).toBeVisible()
+        await expect(sourceFirstLine).toBeVisible({ timeout: captureColdDiagnostics ? 10_000 : 5000 })
       } catch (error) {
-        const artifacts = join(staticRoot, '..', 'e2e-artifacts')
+        const artifacts = join(staticRoot, '..', 'e2e-artifacts', captureColdDiagnostics ? 'cold-diagnostics' : '')
         await mkdir(artifacts, { recursive: true })
         const startupState = await page.evaluate(async () => {
           const registrations = await globalThis.navigator.serviceWorker.getRegistrations()
@@ -347,6 +350,10 @@ try {
       await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain("Type 'string' is not assignable to type 'number'")
       await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain('Unexpected any')
       await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain('Promises must be awaited')
+      if (captureColdDiagnostics) {
+        console.warn('Cold TypeScript diagnostic probe observed all three diagnostics')
+        continue
+      }
       await replaceSource(page, source, false)
       await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toBe('[]')
 
@@ -449,7 +456,7 @@ try {
       await expectColor(previewCanvas, [50, 184, 255, 255])
       expect(forbiddenWorkers).toEqual([])
     } catch (error) {
-      const artifacts = join(staticRoot, '..', 'e2e-artifacts')
+      const artifacts = join(staticRoot, '..', 'e2e-artifacts', captureColdDiagnostics ? 'cold-diagnostics' : '')
       await mkdir(artifacts, { recursive: true })
       await writeFile(join(artifacts, 'failure-errors.json'), JSON.stringify(errors, null, 2))
       const page = browser.contexts()[0]?.pages()[0]
@@ -483,6 +490,10 @@ try {
         await writeFile(join(artifacts, 'pointer-events.json'), JSON.stringify({ pointerEvents, pointerRequests }, null, 2))
         await writeFile(join(artifacts, 'failure.html'), await page.content())
         await page.screenshot({ path: join(artifacts, 'failure.png') })
+      }
+      if (captureColdDiagnostics) {
+        console.error(`Cold TypeScript diagnostic probe observed failure: ${String(error)}`)
+        break
       }
       throw error
     } finally {

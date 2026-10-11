@@ -48,6 +48,13 @@ jobs:
         working-directory: packages/e2e
         env:
           PLAYWRIGHT_BROWSERS_PATH: 0
+      # Temporary evidence probe; the full acceptance steps below remain required.
+      - name: Capture cold TypeScript diagnostics
+        if: runner.os == 'Windows'
+        run: npm run e2e:headless --workspace=packages/e2e -- --capture-cold-diagnostics
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: 0
+          THREEJS_DEMO_LATENCY_MS: 150
       - run: |
           if [ "$RUNNER_OS" = Linux ]; then
             xvfb-run --auto-servernum npm run e2e:headless
@@ -69,7 +76,7 @@ jobs:
           PLAYWRIGHT_BROWSERS_PATH: 0
           THREEJS_DEMO_LATENCY_MS: 150
       - name: Upload browser failure evidence
-        if: failure()
+        if: failure() || runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
           name: browser-failure-${{ matrix.os }}
