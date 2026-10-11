@@ -44,9 +44,13 @@ const files: Record<string, string> = {
     join(root, 'node_modules/three/examples/jsm/controls/OrbitControls.js'),
     'utf8',
   ),
-  '/tsconfig.json': JSON.stringify({
-    compilerOptions: { target: 'es2022', module: 'esnext', moduleResolution: 'bundler', strict: true, skipLibCheck: true, noEmit: true },
-    include: ['src'],
-  }),
+  '/tsconfig.json': JSON.stringify(
+    {
+      compilerOptions: { target: 'es2022', module: 'esnext', moduleResolution: 'bundler', strict: true, skipLibCheck: true, noEmit: true },
+      include: ['src'],
+    },
+    null,
+    2,
+  ),
 }
 await writeFile(join(outputDirectory, 'workspace.json'), `${JSON.stringify(files)}\n`)
