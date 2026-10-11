@@ -57,12 +57,24 @@ jobs:
           PLAYWRIGHT_BROWSERS_PATH: 0
           THREEJS_DEMO_LATENCY_MS: 150
       - name: Test Firefox scene lifecycle
-        run: npm run e2e:headless --workspace=packages/e2e
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a npm run e2e:headless --workspace=packages/e2e
+          else
+            npm run e2e:headless --workspace=packages/e2e
+          fi
         env:
           PLAYWRIGHT_BROWSERS_PATH: 0
           THREEJS_DEMO_BROWSER: firefox
       - name: Test Firefox Pages latency
-        run: npm run e2e:headless --workspace=packages/e2e
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a npm run e2e:headless --workspace=packages/e2e
+          else
+            npm run e2e:headless --workspace=packages/e2e
+          fi
         env:
           PLAYWRIGHT_BROWSERS_PATH: 0
           THREEJS_DEMO_BROWSER: firefox
