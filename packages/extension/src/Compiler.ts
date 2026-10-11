@@ -1,4 +1,5 @@
 import * as esbuild from 'esbuild-wasm'
+import { createBuildCache } from './BuildCache.ts'
 
 export type ReadSource = (path: string) => Promise<string>
 
@@ -68,6 +69,10 @@ export const createCompiler = (): { compile: (readSource: ReadSource) => Promise
     const ready = await context
     return getOutput(await ready.rebuild())
   }
+  const cachedBuild = createBuildCache(async (readSource) => {
+    currentReadSource = readSource
+    return build()
+  })
   return {
     async compile(readSource): Promise<string> {
       await warmup
@@ -92,7 +97,7 @@ export const createCompiler = (): { compile: (readSource: ReadSource) => Promise
           return initial.code
         }
       }
-      return build()
+      return cachedBuild(readSource)
     },
     async dispose(): Promise<void> {
       await warmup
