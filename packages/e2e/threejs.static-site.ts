@@ -205,6 +205,12 @@ try {
     const errors: string[] = [`browser ${browserType.name()} latency ${responseDelay}ms`]
     try {
       const page = await browser.newPage()
+      page.on('requestfailed', (request) => {
+        errors.push(`request failed ${request.url()}: ${request.failure()?.errorText}`)
+      })
+      page.on('console', (message) => {
+        if (message.type() === 'error') errors.push(`console error ${message.text()}`)
+      })
       page.on('pageerror', (error) => {
         errors.push(error.stack || error.message)
       })
@@ -260,6 +266,23 @@ try {
       } catch (error) {
         const artifacts = join(staticRoot, '..', 'e2e-artifacts')
         await mkdir(artifacts, { recursive: true })
+        const startupState = await page.evaluate(async () => {
+          const registrations = await globalThis.navigator.serviceWorker.getRegistrations()
+          return {
+            controller: globalThis.navigator.serviceWorker.controller?.scriptURL,
+            crossOriginIsolated: globalThis.crossOriginIsolated,
+            readyState: globalThis.document.readyState,
+            registrations: registrations.map((registration) => ({
+              active: registration.active?.state,
+              installing: registration.installing?.state,
+              scope: registration.scope,
+              waiting: registration.waiting?.state,
+            })),
+            requests: globalThis.performance.getEntriesByType('resource').map((entry) => ({ duration: entry.duration, name: entry.name })),
+            url: globalThis.location.href,
+          }
+        })
+        await writeFile(join(artifacts, 'startup-state.json'), JSON.stringify(startupState, null, 2))
         await writeFile(join(artifacts, 'startup-errors.json'), JSON.stringify(errors, null, 2))
         await writeFile(join(artifacts, 'startup.html'), await page.content())
         await page.screenshot({ path: join(artifacts, 'startup.png') })
