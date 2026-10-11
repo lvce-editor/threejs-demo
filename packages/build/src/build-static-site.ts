@@ -50,7 +50,46 @@ config.syntaxHighlightingWorkerUrl ||=
   config.workerUrls['develop.syntaxHighlightingWorkerPath'] || config.workerUrls['developer.syntaxHighlightingWorkerPath']
 if (!config.syntaxHighlightingWorkerUrl) throw new Error('Exported syntax highlighting worker URL not found')
 const configuredIndex = index.replace(configMatch[0], `${configMatch[1]}${JSON.stringify(config)}${configMatch[3]}`)
-await writeFile(indexPath, configuredIndex.replace('</head>', `<script src="/threejs-demo/demo-startup.js"></script>\n</head>`))
+const rendererProcessUrl = `${config.assetDir}/packages/renderer-process/dist/rendererProcessMain.js`
+await writeFile(
+  indexPath,
+  configuredIndex
+    .replace(`src="${rendererProcessUrl}"`, 'src="/threejs-demo/demo-main.js"')
+    .replace('</head>', `<script src="/threejs-demo/demo-startup.js"></script>\n</head>`),
+)
+// Pages cannot configure response headers. Establish isolation before starting
+// the editor so TypeScript uses its shared-memory transport, including Firefox.
+await writeFile(
+  join(root, 'dist', 'demo-main.js'),
+  `if (!crossOriginIsolated) {
+  await navigator.serviceWorker.register('/threejs-demo/demo-isolation.js', { scope: '/threejs-demo/' })
+  await navigator.serviceWorker.ready
+  if (!navigator.serviceWorker.controller) {
+    await new Promise(resolve => navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true }))
+  }
+  location.reload()
+} else {
+  await import(${JSON.stringify(rendererProcessUrl)})
+}
+`,
+)
+await writeFile(
+  join(root, 'dist', 'demo-isolation.js'),
+  `self.addEventListener('install', event => event.waitUntil(self.skipWaiting()))
+self.addEventListener('activate', event => event.waitUntil(self.clients.claim()))
+self.addEventListener('fetch', event => {
+  if (new URL(event.request.url).origin !== self.location.origin) return
+  event.respondWith((async () => {
+    const response = await fetch(event.request)
+    if (response.status === 0) return response
+    const headers = new Headers(response.headers)
+    headers.set('Cross-Origin-Opener-Policy', 'same-origin')
+    headers.set('Cross-Origin-Embedder-Policy', 'require-corp')
+    return new Response(response.body, { headers, status: response.status, statusText: response.statusText })
+  })())
+})
+`,
+)
 
 // This exported application always runs on the web, including eager module initialization.
 const rendererPath = join(root, 'dist', commitHash, 'packages', 'renderer-worker', 'dist', 'rendererWorkerMain.js')

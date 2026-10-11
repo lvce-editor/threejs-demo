@@ -48,6 +48,12 @@ export const workspaceTooling = async (): Promise<Record<string, string>> => {
         {
           name: 'typescript-browser-compatibility',
           setup(build) {
+            // The virtual project supplies tsconfigRootDir explicitly. Browser engines
+            // cannot infer a filesystem config directory through V8 stack frames.
+            build.onLoad({ filter: /[/\\]typescript-eslint[/\\]dist[/\\]getTSConfigRootDirFromStack\.js$/ }, () => ({
+              contents: 'exports.getTSConfigRootDirFromStack = () => undefined',
+              loader: 'js',
+            }))
             build.onLoad({ filter: /[/\\]typescript[/\\]lib[/\\]typescript\.js$/ }, async ({ path }) => ({
               contents: removeUnreachableTypeScriptCode(await readFile(path, 'utf8')),
               loader: 'js',

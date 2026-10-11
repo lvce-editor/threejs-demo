@@ -158,7 +158,12 @@ const expectImageChanged = async (canvas: Locator, before: Buffer): Promise<void
 const replaceSource = async (page: Page, source: string, save: boolean = true): Promise<void> => {
   await page.locator('.Editor textarea').focus()
   await page.keyboard.press('Control+a')
-  await page.keyboard.insertText(source)
+  // Firefox's insertText automation emits insertCompositionText rather than a
+  // committed text insertion. Send the same text event through the DOM in both browsers.
+  await page.locator('.Editor textarea').evaluate((element, text) => {
+    element.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, data: text, inputType: 'insertText' }))
+  }, source)
+  await expect.poll(() => rendererCommand(page, 'GetActiveEditor.getTextDocument')).toEqual({ text: source, uri: 'memfs:///threejs/src/main.ts' })
   if (save) await page.keyboard.press('Control+s')
 }
 
@@ -261,6 +266,7 @@ try {
         await page.screenshot({ path: join(artifacts, 'startup.png') })
         throw error
       }
+      expect(await page.evaluate(() => globalThis.crossOriginIsolated)).toBe(true)
       await expect(previewCanvas).toBeVisible()
       await expectColor(previewCanvas, [50, 184, 255, 255])
       const source = await readFile(join(import.meta.dirname, '../../src/main.ts'), 'utf8')
