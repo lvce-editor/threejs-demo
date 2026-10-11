@@ -138,11 +138,11 @@ const rendererCommand = async (page: Page, command: string, args: unknown[] = []
   if (!worker) throw new Error('Renderer worker is not running')
   const entry = worker.url().replace('/renderer-worker/dist/rendererWorkerMain.js', '/renderer-process/dist/rendererProcessMain.js')
   return page.evaluate(
-    async ({ entry, command, args }) => {
+    async ({ args, command, entry }) => {
       const renderer = await import(entry)
       return renderer.executeCommand(command, ...args)
     },
-    { entry, command, args },
+    { args, command, entry },
   )
 }
 
@@ -333,10 +333,16 @@ try {
   await expectImageChanged(previewCanvas, panStart)
   expect(errors.filter((error) => error.includes('setPointerCapture is not a function'))).toEqual([])
   expect(errors.filter((error) => error.includes('Failed to hash ESLint files in one batch'))).toEqual([])
+  await page.reload()
+  await expect(sourceFirstLine).toBeVisible()
+  await expect(previewCanvas).toBeVisible()
+  await expectColor(previewCanvas, [50, 184, 255, 255])
   await assertLeanStartup()
   // Request completions without editing the newly reloaded, verified document.
   await page.locator('.Editor textarea').focus()
-  await rendererCommand(page, 'GetActiveEditor.setSelections', [[5, 9, 5, 9]])
+  const completionRow = source.split('\n').findIndex((line) => line.startsWith('renderer.setSize'))
+  if (completionRow === -1) throw new Error('Renderer completion location is missing')
+  await rendererCommand(page, 'GetActiveEditor.setSelections', [[completionRow, 9, completionRow, 9]])
   await page.keyboard.press('Control+Space')
   const completionItem = page.locator('.EditorCompletionItem').filter({ hasText: 'autoClear' }).first()
   await expect(completionItem).toBeVisible({ timeout: 30_000 })
