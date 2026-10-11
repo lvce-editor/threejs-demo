@@ -231,6 +231,7 @@ try {
   await expect(sourceFirstLine).toBeVisible()
   await expect(previewCanvas).toBeVisible()
   await expectColor(previewCanvas, [50, 184, 255, 255])
+  expect(errors.filter((error) => error.includes('Failed to hash ESLint files in one batch'))).toEqual([])
 } catch (error) {
   const artifacts = join(staticRoot, '..', 'e2e-artifacts')
   await mkdir(artifacts, { recursive: true })
