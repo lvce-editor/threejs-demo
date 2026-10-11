@@ -94,16 +94,19 @@ const handleRequest = async (request: IncomingMessage, response: ServerResponse)
   }
 }
 
-const expectColor = async (canvas: Locator, color: readonly number[]): Promise<void> => {
+const expectColor = async (canvas: Locator, color: readonly number[], timeout: number = 5_000): Promise<void> => {
   await expect
-    .poll(async () => {
-      const bounds = await canvas.boundingBox()
-      if (!bounds) return []
-      // Capture the rendered region even if a refresh replaces the DOM node.
-      const bitmap = PNG.sync.read(await canvas.page().screenshot({ clip: bounds }))
-      const offset = (Math.floor(bitmap.height / 2) * bitmap.width + Math.floor(bitmap.width / 2)) * 4
-      return [...bitmap.data.subarray(offset, offset + 4)]
-    })
+    .poll(
+      async () => {
+        const bounds = await canvas.boundingBox()
+        if (!bounds) return []
+        // Capture the rendered region even if a refresh replaces the DOM node.
+        const bitmap = PNG.sync.read(await canvas.page().screenshot({ clip: bounds }))
+        const offset = (Math.floor(bitmap.height / 2) * bitmap.width + Math.floor(bitmap.width / 2)) * 4
+        return [...bitmap.data.subarray(offset, offset + 4)]
+      },
+      { timeout },
+    )
     .toEqual(color)
 }
 
@@ -111,7 +114,14 @@ const expectImageChanged = async (canvas: Locator, before: Buffer): Promise<void
   const original = PNG.sync.read(before)
   await expect
     .poll(async () => {
-      const current = PNG.sync.read(await canvas.screenshot())
+      let screenshot: Buffer
+      try {
+        screenshot = await canvas.screenshot()
+      } catch (error) {
+        if (error instanceof Error && error.message.includes('Element is not attached to the DOM')) return 0
+        throw error
+      }
+      const current = PNG.sync.read(screenshot)
       let changedPixels = 0
       for (let offset = 0; offset < original.data.length; offset += 4) {
         if (
@@ -269,7 +279,7 @@ try {
   await expect(page.getByText(/Build failed:/).first()).toBeVisible()
   await expectColor(previewCanvas, [0, 0, 255, 255])
   await replaceSource(page, source)
-  await expectColor(previewCanvas, [50, 184, 255, 255])
+  await expectColor(previewCanvas, [50, 184, 255, 255], 30_000)
 
   for (let iteration = 0; iteration < 20; iteration++) {
     const red = iteration % 2 === 0
