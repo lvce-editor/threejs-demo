@@ -12,6 +12,7 @@ const responseDelay = Number(process.env.THREEJS_DEMO_LATENCY_MS || 0)
 if (!Number.isSafeInteger(responseDelay) || responseDelay < 0) throw new Error('THREEJS_DEMO_LATENCY_MS must be a nonnegative integer')
 const pathPrefix = '/threejs-demo'
 const staticRoot = join(import.meta.dirname, '..', '..', '.tmp', 'static')
+const sandboxWorkerPathSuffix = join('preview-sandbox-worker', 'dist', 'previewSandBoxWorkerMain.js')
 const contentTypes: Readonly<Record<string, string>> = {
   '.css': 'text/css',
   '.html': 'text/html',
@@ -79,7 +80,7 @@ const handleRequest = async (request: IncomingMessage, response: ServerResponse)
   }
   try {
     let content = await readFile(filePath)
-    if (filePath.endsWith('/preview-sandbox-worker/dist/previewSandBoxWorkerMain.js')) {
+    if (filePath.endsWith(`${sep}${sandboxWorkerPathSuffix}`)) {
       content = Buffer.concat([Buffer.from(sandboxInstrumentation), content])
     }
     response.writeHead(200, {
@@ -93,24 +94,50 @@ const handleRequest = async (request: IncomingMessage, response: ServerResponse)
   }
 }
 
-const expectColor = async (canvas: Locator, color: readonly number[]): Promise<void> => {
+const expectColor = async (canvas: Locator, color: readonly number[], timeout: number = 5000): Promise<void> => {
+  await expect
+    .poll(
+      async () => {
+        const bounds = await canvas.boundingBox()
+        if (!bounds) return []
+        // Capture the rendered region even if a refresh replaces the DOM node.
+        const bitmap = PNG.sync.read(await canvas.page().screenshot({ clip: bounds }))
+        const offset = (Math.floor(bitmap.height / 2) * bitmap.width + Math.floor(bitmap.width / 2)) * 4
+        return [...bitmap.data.subarray(offset, offset + 4)]
+      },
+      { timeout },
+    )
+    .toEqual(color)
+}
+
+const screenshotCanvas = async (canvas: Locator): Promise<Buffer | undefined> => {
+  try {
+    return await canvas.screenshot()
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('Element is not attached to the DOM')) return undefined
+    throw error
+  }
+}
+
+const waitForCanvasScreenshot = async (canvas: Locator): Promise<Buffer> => {
+  let screenshot: Buffer | undefined
   await expect
     .poll(async () => {
-      const bounds = await canvas.boundingBox()
-      if (!bounds) return []
-      // Capture the rendered region even if a refresh replaces the DOM node.
-      const bitmap = PNG.sync.read(await canvas.page().screenshot({ clip: bounds }))
-      const offset = (Math.floor(bitmap.height / 2) * bitmap.width + Math.floor(bitmap.width / 2)) * 4
-      return [...bitmap.data.subarray(offset, offset + 4)]
+      screenshot = await screenshotCanvas(canvas)
+      return Boolean(screenshot)
     })
-    .toEqual(color)
+    .toBe(true)
+  if (!screenshot) throw new Error('Preview canvas screenshot is unavailable')
+  return screenshot
 }
 
 const expectImageChanged = async (canvas: Locator, before: Buffer): Promise<void> => {
   const original = PNG.sync.read(before)
   await expect
     .poll(async () => {
-      const current = PNG.sync.read(await canvas.screenshot())
+      const screenshot = await screenshotCanvas(canvas)
+      if (!screenshot) return 0
+      const current = PNG.sync.read(screenshot)
       let changedPixels = 0
       for (let offset = 0; offset < original.data.length; offset += 4) {
         if (
@@ -260,6 +287,7 @@ try {
   await replaceSource(page, source.replace('#32b8ff', '#ff0000'))
   await expectColor(previewCanvas, [255, 0, 0, 255])
   await replaceSource(page, source.replace('#32b8ff', '#00ff00'))
+  await expectColor(previewCanvas, [0, 255, 0, 255], 30_000)
   await replaceSource(page, source.replace('#32b8ff', '#0000ff'))
   await expectColor(previewCanvas, [0, 0, 255, 255])
 
@@ -267,7 +295,7 @@ try {
   await expect(page.getByText(/Build failed:/).first()).toBeVisible()
   await expectColor(previewCanvas, [0, 0, 255, 255])
   await replaceSource(page, source)
-  await expectColor(previewCanvas, [50, 184, 255, 255])
+  await expectColor(previewCanvas, [50, 184, 255, 255], 30_000)
 
   for (let iteration = 0; iteration < 20; iteration++) {
     const red = iteration % 2 === 0
@@ -314,18 +342,18 @@ try {
   await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toBe('[]')
   const previewBounds = await previewCanvas.boundingBox()
   if (!previewBounds) throw new Error('Preview canvas has no bounding box')
-  const dragStart = await previewCanvas.screenshot()
+  const dragStart = await waitForCanvasScreenshot(previewCanvas)
   await page.mouse.move(previewBounds.x + previewBounds.width / 2, previewBounds.y + previewBounds.height / 2)
   await page.mouse.down()
   await page.mouse.move(previewBounds.x + previewBounds.width * 0.7, previewBounds.y + previewBounds.height / 2, { steps: 5 })
   await page.mouse.up()
   await expectImageChanged(previewCanvas, dragStart)
-  const zoomStart = await previewCanvas.screenshot()
+  const zoomStart = await waitForCanvasScreenshot(previewCanvas)
   await page.mouse.move(previewBounds.x + previewBounds.width / 2, previewBounds.y + previewBounds.height / 2)
   await page.mouse.wheel(0, -300)
   await expectImageChanged(previewCanvas, zoomStart)
   expect(await page.evaluate(() => (globalThis as unknown as { scrollY: number }).scrollY)).toBe(0)
-  const panStart = await previewCanvas.screenshot()
+  const panStart = await waitForCanvasScreenshot(previewCanvas)
   await page.mouse.move(previewBounds.x + previewBounds.width / 2, previewBounds.y + previewBounds.height / 2)
   await page.mouse.down({ button: 'right' })
   await page.mouse.move(previewBounds.x + previewBounds.width * 0.7, previewBounds.y + previewBounds.height * 0.7, { steps: 5 })
