@@ -29,23 +29,31 @@ export const workspaceTooling = async (): Promise<Record<string, string>> => {
     await visit('')
     for (const dependency of Object.keys(JSON.parse(manifest).dependencies || {})) await addTypes(dependency)
   }
+  await addTypes('typescript')
   await addTypes('three')
   await addTypes('@types/three')
   for (const [name, entry] of [
     ['eslint', 'eslint/universal'],
-    ['@typescript-eslint/eslint-plugin', '@typescript-eslint/eslint-plugin'],
+    ['typescript-eslint', 'typescript-eslint'],
+    ['typescript', 'typescript'],
   ]) {
     const result = await build({
       entryPoints: [require.resolve(entry)],
       bundle: true,
       platform: 'browser',
       format: 'cjs',
-      external: ['node:*', ...builtinModules, 'jiti', 'jiti/package.json'],
+      external: ['node:*', ...builtinModules, 'jiti', 'jiti/package.json', ...(name === 'typescript-eslint' ? ['typescript'] : [])],
       write: false,
       plugins: [
         {
           name: 'typescript-browser-compatibility',
           setup(build) {
+            // The virtual project supplies tsconfigRootDir explicitly. Browser engines
+            // cannot infer a filesystem config directory through V8 stack frames.
+            build.onLoad({ filter: /[/\\]typescript-eslint[/\\]dist[/\\]getTSConfigRootDirFromStack\.js$/ }, () => ({
+              contents: 'exports.getTSConfigRootDirFromStack = () => undefined',
+              loader: 'js',
+            }))
             build.onLoad({ filter: /[/\\]typescript[/\\]lib[/\\]typescript\.js$/ }, async ({ path }) => ({
               contents: removeUnreachableTypeScriptCode(await readFile(path, 'utf8')),
               loader: 'js',
@@ -54,10 +62,12 @@ export const workspaceTooling = async (): Promise<Record<string, string>> => {
         },
       ],
     })
-    files[`/node_modules/${name}/index.cjs`] = result.outputFiles[0].text
-    files[`/node_modules/${name}/package.json`] = JSON.stringify({ name, main: 'index.cjs' })
+    // Keep the compiler beside its lib.*.d.ts files so typed ESLint finds standard libraries.
+    const main = name === 'typescript' ? 'lib/typescript.js' : 'index.cjs'
+    files[`/node_modules/${name}/${main}`] = result.outputFiles[0].text
+    files[`/node_modules/${name}/package.json`] = JSON.stringify({ name, main })
   }
   files['/eslint.config.js'] =
-    "import tsPlugin from '@typescript-eslint/eslint-plugin'\nexport default [...tsPlugin.configs['flat/recommended'], { files: ['**/*.ts'], rules: { '@typescript-eslint/no-unused-vars': 'error' } }]\n"
+    "import tseslint from 'typescript-eslint'\nexport default [...tseslint.configs.recommendedTypeChecked.map(config => ({ ...config, files: ['**/*.ts'] })), { files: ['**/*.ts'], languageOptions: { parserOptions: { project: ['./tsconfig.json'], tsconfigRootDir: '/threejs' } }, rules: { '@typescript-eslint/no-unused-vars': 'error' } }]\n"
   return files
 }
