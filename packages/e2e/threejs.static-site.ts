@@ -6,6 +6,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { chromium } from 'playwright'
 import { PNG } from 'pngjs'
 import { verifyFirefoxCompilerWarnings } from './firefoxCompilerWarnings.ts'
+import { measureStartup } from './startupMetrics.ts'
 
 const responseDelay = Number(process.env.THREEJS_DEMO_LATENCY_MS || 0)
 if (!Number.isSafeInteger(responseDelay) || responseDelay < 0) throw new Error('THREEJS_DEMO_LATENCY_MS must be a nonnegative integer')
@@ -132,15 +133,20 @@ const replaceSource = async (page: Page, source: string, save: boolean = true): 
   if (save) await page.keyboard.press('Control+s')
 }
 
-const diagnostics = async (page: Page): Promise<string> => {
+const rendererCommand = async (page: Page, command: string, args: unknown[] = []): Promise<unknown> => {
   const worker = page.workers().find((worker) => worker.url().includes('/renderer-worker/'))
   if (!worker) throw new Error('Renderer worker is not running')
   const entry = worker.url().replace('/renderer-worker/dist/rendererWorkerMain.js', '/renderer-process/dist/rendererProcessMain.js')
-  return page.evaluate(async (entry) => {
-    const renderer = await import(entry)
-    return JSON.stringify(await renderer.executeCommand('GetActiveEditor.getDiagnostics'))
-  }, entry)
+  return page.evaluate(
+    async ({ args, command, entry }) => {
+      const renderer = await import(entry)
+      return renderer.executeCommand(command, ...args)
+    },
+    { args, command, entry },
+  )
 }
+
+const diagnostics = async (page: Page): Promise<string> => JSON.stringify(await rendererCommand(page, 'GetActiveEditor.getDiagnostics'))
 
 const navigationErrors = (errors: readonly string[]): string[] => {
   return errors.filter((error) => error.includes('Cannot navigate to child: child not found at index'))
@@ -175,7 +181,11 @@ try {
   page.on('requestfailed', (request) => {
     errors.push(`${request.failure()?.errorText} ${request.url()}`)
   })
+  const forbiddenWorkers: string[] = []
   page.on('worker', (worker) => {
+    if (/\/(?:panel-worker|icon-theme-worker|status-bar-worker|source-control-worker|output-view|activity-bar-worker)\//.test(worker.url())) {
+      forbiddenWorkers.push(worker.url())
+    }
     errors.push(`worker ${worker.url()}`)
   })
   const url = process.env.THREEJS_DEMO_URL || `http://127.0.0.1:${address.port}${pathPrefix}/`
@@ -183,6 +193,30 @@ try {
   const sourceFirstLine = page.locator('.EditorRow', { hasText: "import * as THREE from 'three'" })
   const previewCanvas = page.locator('.Viewlet.Preview #scene')
 
+  await page.addInitScript(() => {
+    const startup = { visibleBars: [] as string[] }
+    Object.defineProperty(globalThis, '__threejsStartup', { value: startup })
+    const observe = (): void => {
+      for (const selector of ['.ActivityBar', '.StatusBar']) {
+        const element = document.querySelector(selector)
+        if (!element) continue
+        const { height, width } = element.getBoundingClientRect()
+        const style = getComputedStyle(element)
+        if (width > 0 && height > 0 && style.visibility !== 'hidden' && style.display !== 'none') startup.visibleBars.push(selector)
+      }
+      requestAnimationFrame(observe)
+    }
+    requestAnimationFrame(observe)
+  })
+  const assertLeanStartup = async (): Promise<void> => {
+    expect(forbiddenWorkers).toEqual([])
+    expect(page.workers().filter((worker) => worker.url().endsWith('/typescriptWorkerMain.js'))).toHaveLength(0)
+    expect(await page.evaluate(() => Object.getOwnPropertyDescriptor(globalThis, '__threejsStartup')?.value.visibleBars)).toEqual([])
+    const icon = page.getByRole('tab', { exact: true, name: 'main.ts Close' }).locator('img.TabIcon')
+    await expect(icon).toBeVisible()
+    await expect(icon).toHaveAttribute('src', /\/file_type_typescript\.svg$/)
+    await expect.poll(() => icon.evaluate((element: HTMLImageElement) => element.complete && element.naturalWidth > 0)).toBe(true)
+  }
   await page.goto(url)
   try {
     await expect(sourceFirstLine).toBeVisible()
@@ -211,6 +245,10 @@ try {
     return counts.contexts
   }
   await expect.poll(contextsCount).toBe(1)
+  if (process.env.THREEJS_DEMO_METRICS) {
+    await writeFile(process.env.THREEJS_DEMO_METRICS, JSON.stringify(await measureStartup(browser), null, 2))
+  }
+  await assertLeanStartup()
   const initialResources = await resourceCounts()
   const initialTimers = initialResources.timers
   await replaceSource(page, `${source}\nexport const typeMismatch: number = "invalid"\nexport type Unsafe = any\n`, false)
@@ -295,6 +333,25 @@ try {
   await expectImageChanged(previewCanvas, panStart)
   expect(errors.filter((error) => error.includes('setPointerCapture is not a function'))).toEqual([])
   expect(errors.filter((error) => error.includes('Failed to hash ESLint files in one batch'))).toEqual([])
+  await page.reload()
+  await expect(sourceFirstLine).toBeVisible()
+  await expect(previewCanvas).toBeVisible()
+  await expectColor(previewCanvas, [50, 184, 255, 255])
+  await assertLeanStartup()
+  // Request completions without editing the newly reloaded, verified document.
+  await page.locator('.Editor textarea').focus()
+  const completionRow = source.split('\n').findIndex((line) => line.startsWith('renderer.setSize'))
+  if (completionRow === -1) throw new Error('Renderer completion location is missing')
+  await rendererCommand(page, 'GetActiveEditor.setSelections', [[completionRow, 9, completionRow, 9]])
+  await page.keyboard.press('Control+Space')
+  const completionItem = page.locator('.EditorCompletionItem').filter({ hasText: 'autoClear' }).first()
+  await expect(completionItem).toBeVisible({ timeout: 30_000 })
+  expect(page.workers().filter((worker) => worker.url().endsWith('/typescriptWorkerMain.js'))).toHaveLength(1)
+  await page.keyboard.press('Escape')
+  await page.setViewportSize({ height: 700, width: 1000 })
+  await expect(previewCanvas).toBeVisible()
+  await expectColor(previewCanvas, [50, 184, 255, 255])
+  expect(forbiddenWorkers).toEqual([])
 } catch (error) {
   const artifacts = join(staticRoot, '..', 'e2e-artifacts')
   await mkdir(artifacts, { recursive: true })
