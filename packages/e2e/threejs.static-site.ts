@@ -289,6 +289,9 @@ try {
       }
       await page.goto(url)
       try {
+        // The bootstrap document installs isolation and reloads before opening the editor.
+        const isolatedDocument = await page.waitForFunction(() => globalThis.crossOriginIsolated, undefined, { timeout: 5000 })
+        await isolatedDocument.dispose()
         await expect(sourceFirstLine).toBeVisible()
       } catch (error) {
         const artifacts = join(staticRoot, '..', 'e2e-artifacts')
