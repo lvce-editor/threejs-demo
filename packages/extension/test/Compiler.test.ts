@@ -23,3 +23,23 @@ void test('the scene compiler keeps used Three.js exports and removes unused one
   assert.match(output, /WebGLRenderer/)
   assert.doesNotMatch(output, /TextureLoader/)
 })
+
+void test('incremental scene compilation reloads edited virtual source', async () => {
+  let source = "import { value } from 'three'; console.log(value, 'initial')"
+  let context: esbuild.BuildContext | undefined
+  const build = async (options: esbuild.BuildOptions): Promise<esbuild.BuildResult> => {
+    context ||= await esbuild.context(options)
+    return context.rebuild()
+  }
+  const readSource = async (): Promise<string> => source
+  try {
+    const first = await compileScene(build, 'export const value = 42', readSource)
+    assert.match(first, /initial/)
+    source = "import { value } from 'three'; console.log(value, 'edited')"
+    const second = await compileScene(build, 'export const value = 42', readSource)
+    assert.match(second, /edited/)
+    assert.doesNotMatch(second, /initial/)
+  } finally {
+    await context?.dispose()
+  }
+})

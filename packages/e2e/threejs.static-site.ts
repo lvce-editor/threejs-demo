@@ -204,7 +204,7 @@ try {
     // Firefox otherwise blocklists WebGL2 on GPU-less CI runners.
     const headless = !(browserType === firefox && process.platform === 'linux' && process.env.DISPLAY)
     const browser = await browserType.launch({ firefoxUserPrefs: { 'webgl.force-enabled': true }, headless })
-    const errors: string[] = []
+    const errors: string[] = [`browser ${browserType.name()} latency ${responseDelay}ms`]
     try {
       const page = await browser.newPage()
       page.on('pageerror', (error) => {

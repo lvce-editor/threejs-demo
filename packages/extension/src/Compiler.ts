@@ -2,7 +2,11 @@ import * as esbuild from 'esbuild-wasm'
 
 export type ReadSource = (path: string) => Promise<string>
 
-export const compileScene = async (build: typeof esbuild.build, three: string, readSource: ReadSource): Promise<string> => {
+export const compileScene = async (
+  build: (options: esbuild.BuildOptions) => Promise<esbuild.BuildResult>,
+  three: string,
+  readSource: ReadSource,
+): Promise<string> => {
   const result = await build({
     bundle: true,
     entryPoints: ['/src/main.ts'],
@@ -37,7 +41,7 @@ export const compileScene = async (build: typeof esbuild.build, three: string, r
   return output
 }
 
-export const createCompiler = (): ((readSource: ReadSource) => Promise<string>) => {
+export const createCompiler = (): ((readSource: ReadSource) => Promise<string>) & { dispose: () => Promise<void> } => {
   const initialized = esbuild.initialize({ wasmURL: new URL('esbuild.wasm', import.meta.url).href, worker: false })
   const loadThree = async (): Promise<string> => {
     const response = await fetch(new URL('three.js', import.meta.url))
@@ -45,9 +49,47 @@ export const createCompiler = (): ((readSource: ReadSource) => Promise<string>) 
     return response.text()
   }
   const threeSource = loadThree()
-  return async (readSource: ReadSource): Promise<string> => {
-    await initialized
-    const three = await threeSource
-    return compileScene(esbuild.build, three, readSource)
+  let context: Promise<esbuild.BuildContext> | undefined
+  let currentReadSource: ReadSource
+  let tail: Promise<void> = Promise.resolve()
+  let disposed = false
+  const build = async (options: esbuild.BuildOptions): Promise<esbuild.BuildResult> => {
+    context ||= esbuild.context(options)
+    const activeContext = await context
+    return activeContext.rebuild()
   }
+  const compile = (readSource: ReadSource): Promise<string> => {
+    const run = async (): Promise<string> => {
+      if (disposed) throw new Error('Scene compiler is disposed')
+      await initialized
+      const three = await threeSource
+      if (disposed) throw new Error('Scene compiler is disposed')
+      currentReadSource = readSource
+      return compileScene(build, three, (path) => currentReadSource(path))
+    }
+    // esbuild coalesces concurrent rebuilds. Serialize warm-up and saves so each
+    // save receives output from its own current source rather than an older build.
+    const previous = tail
+    const result = (async (): Promise<string> => {
+      await previous
+      return run()
+    })()
+    tail = (async (): Promise<void> => {
+      try {
+        await result
+      } catch {
+        // A failed scene must not prevent a later corrected save from compiling.
+      }
+    })()
+    return result
+  }
+  return Object.assign(compile, {
+    dispose: async (): Promise<void> => {
+      disposed = true
+      if (context) {
+        const activeContext = await context
+        await activeContext.dispose()
+      }
+    },
+  })
 }

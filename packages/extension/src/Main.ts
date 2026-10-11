@@ -8,6 +8,7 @@ import {
   writeFile,
 } from '@lvce-editor/api'
 import { createCompiler } from './Compiler.ts'
+import { createInitialBuild } from './InitialBuild.ts'
 import { createRebuilder } from './Rebuilder.ts'
 
 const workspace = 'memfs:///threejs'
@@ -15,6 +16,7 @@ const state: {
   initialized: boolean
   previewOpened?: boolean
   rebuild?: () => Promise<void>
+  disposeCompiler?: () => Promise<void>
   changeSubscription?: { dispose: () => void }
   dependencyFiles?: [string, string][]
   workspaceReady?: Promise<void>
@@ -46,28 +48,34 @@ const completeWorkspace = async (): Promise<void> => {
   await state.workspaceReady
 }
 
+const isPreviewDependency = (path: string): boolean => path === '/node_modules/three/examples/jsm/controls/OrbitControls.js'
+
 const initializeWorkspace = async (): Promise<void> => {
   if (await exists(`${workspace}/src/main.ts`)) {
     return
   }
 
   const entries = await getWorkspaceFiles()
-  state.dependencyFiles = entries.filter(([path]) => path.startsWith('/node_modules/'))
-  await writeWorkspaceFiles(entries.filter(([path]) => !path.startsWith('/node_modules/')))
+  state.dependencyFiles = entries.filter(([path]) => path.startsWith('/node_modules/') && !isPreviewDependency(path))
+  // The preview needs OrbitControls, but not the compiler and declaration inventory.
+  await writeWorkspaceFiles(entries.filter(([path]) => !path.startsWith('/node_modules/') || isPreviewDependency(path)))
 }
 
 const openDemo = async (): Promise<void> => {
   await initializeWorkspace()
   if (!state.initialized) {
     const compile = createCompiler()
+    state.disposeCompiler = compile.dispose
     state.rebuild = createRebuilder({
-      build: () => compile((path) => readFile(`${workspace}${path}`)),
+      build: createInitialBuild(compile, (path) => readFile(`${workspace}${path}`)),
       publish: async (code) => {
         await writeFile(`${workspace}/dist/main.js`, code)
         if (state.previewOpened) await executeCommand('SimpleBrowser.reload')
         else {
           await executeCommand('Layout.showPreview', `${workspace}/index.html`)
           state.previewOpened = true
+          // Warm compilation after the shipped scene is visible, without replacing it.
+          void compile((path) => readFile(`${workspace}${path}`)).catch(() => {})
           await completeWorkspace()
           await executeCommand('ExtensionManagement.activateByEvent', 'onDiagnostic:typescript')
           await executeCommand('Preferences.update', { 'editor.diagnostics': true })
@@ -90,7 +98,6 @@ const openDemo = async (): Promise<void> => {
   await executeCommand('Preferences.update', { 'editor.diagnostics': false })
   await executeCommand('Layout.showMain')
   await executeCommand('Main.openUri', `${workspace}/src/main.ts`)
-  await completeWorkspace()
   await state.rebuild?.()
   await executeCommand('Main.openUri', `${workspace}/src/main.ts`)
   await executeCommand('Layout.hidePanel')
@@ -106,6 +113,7 @@ export const activate = async (): Promise<void> => {
   registerCommand({ execute: openDemo, id: 'threejs.openDemo' })
 }
 
-export const deactivate = (): void => {
+export const deactivate = async (): Promise<void> => {
   state.changeSubscription?.dispose()
+  await state.disposeCompiler?.()
 }

@@ -74,4 +74,17 @@ const files: Record<string, string> = {
     2,
   ),
 }
+// Ship the fixed initial scene so opening the demo does not wait for a cold
+// WebAssembly compilation. Edited scenes still compile in the browser.
+const initialScene = await esbuild.build({
+  bundle: true,
+  entryPoints: [join(root, 'src', 'main.ts')],
+  format: 'iife',
+  platform: 'browser',
+  target: 'es2022',
+  treeShaking: true,
+  write: false,
+})
+files['/dist/main.js'] = initialScene.outputFiles[0].text
+files['/dist/main.source.ts'] = files['/src/main.ts']
 await writeFile(join(outputDirectory, 'workspace.json'), `${JSON.stringify(files)}\n`)
