@@ -14,6 +14,7 @@ if (!Number.isSafeInteger(responseDelay) || responseDelay < 0) throw new Error('
 const pathPrefix = '/threejs-demo'
 const staticRoot = join(import.meta.dirname, '..', '..', '.tmp', 'static')
 const sandboxWorkerPathSuffix = join('preview-sandbox-worker', 'dist', 'previewSandBoxWorkerMain.js')
+const rendererProcessPathSuffix = join('renderer-process', 'dist', 'rendererProcessMain.js')
 const contentTypes: Readonly<Record<string, string>> = {
   '.css': 'text/css',
   '.html': 'text/html',
@@ -23,6 +24,7 @@ const contentTypes: Readonly<Record<string, string>> = {
   '.woff2': 'font/woff2',
 }
 const sandboxInstrumentation = `{
+  globalThis.__threejsFrameTrace = { ticks: 0, paints: 0, captures: 0, sends: 0, acks: 0 }
   const timers = new Set()
   const contexts = new Set()
   const nativeSetTimeout = globalThis.setTimeout
@@ -83,7 +85,19 @@ const handleRequest = async (request: IncomingMessage, response: ServerResponse)
     let content = await readFile(filePath)
     if (filePath.endsWith(`${sep}${sandboxWorkerPathSuffix}`)) {
       const dispatch = 'const dispatchEvent = (element, event) => {'
-      const source = content.toString()
+      let source = content.toString()
+      const frameSeams = [
+        ['const tick = () => {', 'ticks'],
+        ['const result = paint(...args);', 'paints'],
+        ['send(canvas.transferToImageBitmap());', 'captures'],
+        ['inFlight = true;', 'sends'],
+        ['inFlight = false;\n    if (pending)', 'acks'],
+      ]
+      for (const [seam, counter] of frameSeams) {
+        if (!source.includes(seam)) throw new Error(`Sandbox frame trace seam is missing: ${counter}`)
+        const trace = `globalThis.__threejsFrameTrace.${counter}++; globalThis.__threejsFrameTrace.last_${counter} = Date.now();`
+        source = source.replace(seam, () => (counter === 'ticks' ? `${seam}\n${trace}` : `${trace}\n${seam}`))
+      }
       if (!source.includes(dispatch)) throw new Error('Sandbox pointer trace seam is missing')
       content = Buffer.from(
         source.replace(
@@ -98,6 +112,21 @@ const handleRequest = async (request: IncomingMessage, response: ServerResponse)
         ),
       )
       content = Buffer.concat([Buffer.from(sandboxInstrumentation), content])
+    }
+    if (filePath.endsWith(`${sep}${rendererProcessPathSuffix}`)) {
+      const seam = 'context.transferFromImageBitmap(bitmap);'
+      const source = content.toString()
+      if (!source.includes(seam)) throw new Error('Native presentation trace seam is missing')
+      content = Buffer.from(
+        source.replace(
+          seam,
+          () => `${seam}
+            const trace = globalThis.__threejsPresentationTrace ||= { frames: 0 }
+            trace.frames++
+            trace.last = Date.now()
+          `,
+        ),
+      )
     }
     response.writeHead(200, {
       'Content-Type': contentTypes[extname(filePath)] || 'application/octet-stream',
@@ -526,11 +555,22 @@ try {
   if (page) {
     const pointers = {
       native: await page.evaluate(() => Object.getOwnPropertyDescriptor(globalThis, '__threejsPointerTrace')?.value),
+      presentation: await page.evaluate(() => Object.getOwnPropertyDescriptor(globalThis, '__threejsPresentationTrace')?.value),
       sandbox: await Promise.all(
         page
           .workers()
           .filter((worker) => worker.url().includes('/preview-sandbox-worker/'))
-          .map((worker) => worker.evaluate(() => Object.getOwnPropertyDescriptor(globalThis, '__threejsPointerTrace')?.value)),
+          .map((worker) =>
+            worker.evaluate(() => {
+              const resources = Object.getOwnPropertyDescriptor(globalThis, '__threejsTestResources')?.value
+              return {
+                frames: Object.getOwnPropertyDescriptor(globalThis, '__threejsFrameTrace')?.value,
+                pointers: Object.getOwnPropertyDescriptor(globalThis, '__threejsPointerTrace')?.value,
+                resources: { contexts: resources?.contexts.size, timers: resources?.timers.size },
+                time: Date.now(),
+              }
+            }),
+          ),
       ),
     }
     await writeFile(join(artifacts, 'failure-pointers.json'), JSON.stringify(pointers, null, 2))
