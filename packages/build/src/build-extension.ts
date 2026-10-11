@@ -34,12 +34,16 @@ const files: Record<string, string> = {
   ...(await workspaceTooling()),
   '/src/main.ts': await readFile(join(root, 'src', 'main.ts'), 'utf8'),
   '/index.html': await readFile(join(root, 'index.html'), 'utf8'),
-  '/package.json': JSON.stringify({
-    name: 'threejs-hello-world',
-    type: 'module',
-    dependencies: { three: JSON.parse(await readFile(join(root, 'node_modules/three/package.json'), 'utf8')).version },
-    devDependencies: { '@types/three': JSON.parse(await readFile(join(root, 'node_modules/@types/three/package.json'), 'utf8')).version },
-  }),
+  '/package.json': JSON.stringify(
+    {
+      name: 'threejs-hello-world',
+      type: 'module',
+      dependencies: { three: JSON.parse(await readFile(join(root, 'node_modules/three/package.json'), 'utf8')).version },
+      devDependencies: { '@types/three': JSON.parse(await readFile(join(root, 'node_modules/@types/three/package.json'), 'utf8')).version },
+    },
+    null,
+    2,
+  ),
   '/node_modules/three/examples/jsm/controls/OrbitControls.js': await readFile(
     join(root, 'node_modules/three/examples/jsm/controls/OrbitControls.js'),
     'utf8',

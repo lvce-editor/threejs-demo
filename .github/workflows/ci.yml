@@ -12,20 +12,39 @@ permissions:
 
 jobs:
   ci:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
           node-version-file: '.nvmrc'
-          cache: npm
+      - name: Compute node_modules cache key
+        id: nodeModulesCacheKey
+        run: echo "value=$(node packages/build/src/computeNodeModulesCacheKey.ts)" >> $GITHUB_OUTPUT
+        shell: bash
+      - uses: actions/cache@v6
+        id: node-modules-cache
+        with:
+          path: '**/node_modules'
+          key: ${{ runner.os }}-${{ runner.arch }}-node_modules-${{ steps.nodeModulesCacheKey.outputs.value }}
       - run: npm ci
+        if: steps.node-modules-cache.outputs.cache-hit != 'true'
       - run: npm run build
       - run: npm test
       - run: npm run type-check
       - run: npm run lint
-      - run: npx playwright install --with-deps chromium firefox
+      - name: Install Playwright system dependencies
+        if: runner.os == 'Linux'
+        run: sudo npx playwright install-deps chromium firefox
+        working-directory: packages/e2e
+      - name: Install Playwright browsers
+        if: steps.node-modules-cache.outputs.cache-hit != 'true'
+        run: npx playwright install chromium firefox
         working-directory: packages/e2e
         env:
           PLAYWRIGHT_BROWSERS_PATH: 0
@@ -52,14 +71,14 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: browser-failure
+          name: browser-failure-${{ matrix.os }}
           path: .tmp/e2e-artifacts
           if-no-files-found: ignore
       - name: Configure GitHub Pages
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && matrix.os == 'ubuntu-24.04'
         uses: actions/configure-pages@v6
       - name: Upload static demo
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && matrix.os == 'ubuntu-24.04'
         uses: actions/upload-pages-artifact@v5
         with:
           path: .tmp/static
