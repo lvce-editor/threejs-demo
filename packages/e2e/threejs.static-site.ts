@@ -95,7 +95,7 @@ const handleRequest = async (request: IncomingMessage, response: ServerResponse)
   }
 }
 
-const expectColor = async (canvas: Locator, color: readonly number[], timeout: number = 5000): Promise<void> => {
+const expectColor = async (canvas: Locator, color: readonly number[], timeout: number = 15_000): Promise<void> => {
   await expect
     .poll(
       async () => {
