@@ -221,6 +221,15 @@ try {
     const errors: string[] = [`browser ${browserType.name()} latency ${responseDelay}ms`]
     try {
       const page = await browser.newPage()
+      page.on('crash', () => {
+        errors.push('page crashed')
+      })
+      page.on('close', () => {
+        errors.push('page closed')
+      })
+      page.on('framenavigated', (frame) => {
+        if (frame === page.mainFrame()) errors.push(`main frame navigated ${frame.url()}`)
+      })
       page.on('requestfailed', (request) => {
         errors.push(`request failed ${request.url()}: ${request.failure()?.errorText}`)
       })
@@ -364,6 +373,7 @@ try {
       await expectColor(previewCanvas, [50, 184, 255, 255], 30_000)
 
       for (let iteration = 0; iteration < 20; iteration++) {
+        errors.push(`resource cycle ${iteration}`)
         const red = iteration % 2 === 0
         await replaceSource(
           page,
@@ -455,6 +465,13 @@ try {
       await writeFile(join(artifacts, 'failure-errors.json'), JSON.stringify(errors, null, 2))
       const page = browser.contexts()[0]?.pages()[0]
       if (page) {
+        // Page evidence must survive independently of destroyed worker contexts.
+        try {
+          await writeFile(join(artifacts, 'failure.html'), await page.content())
+          await page.screenshot({ path: join(artifacts, 'failure.png') })
+        } catch (captureError) {
+          await writeFile(join(artifacts, 'page-capture-error.txt'), String(captureError))
+        }
         try {
           const typescript = page.workers().find((worker) => worker.url().endsWith('/typescriptWorkerMain.js'))
           const textDocument = await rendererCommand(page, 'GetActiveEditor.getTextDocument')
@@ -483,8 +500,6 @@ try {
             : []
           const pointerEvents = await page.evaluate(() => Object.getOwnPropertyDescriptor(globalThis, '__threejsStartup')?.value.pointerEvents)
           await writeFile(join(artifacts, 'pointer-events.json'), JSON.stringify({ pointerEvents, pointerRequests }, null, 2))
-          await writeFile(join(artifacts, 'failure.html'), await page.content())
-          await page.screenshot({ path: join(artifacts, 'failure.png') })
         } catch (captureError) {
           await writeFile(join(artifacts, 'failure-capture-error.txt'), String(captureError))
         }
