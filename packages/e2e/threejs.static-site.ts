@@ -123,7 +123,9 @@ const expectImageChanged = async (canvas: Locator, before: Buffer): Promise<void
   const original = PNG.sync.read(before)
   await expect
     .poll(async () => {
-      const current = PNG.sync.read(await canvas.screenshot())
+      const bounds = await canvas.boundingBox()
+      if (!bounds) return 0
+      const current = PNG.sync.read(await canvas.page().screenshot({ clip: bounds }))
       let changedPixels = 0
       for (let offset = 0; offset < original.data.length; offset += 4) {
         if (
@@ -276,20 +278,24 @@ try {
     await expect(previewCloseButtons).toHaveCount(1)
     await expectColor(previewCanvas, [50, 184, 255, 255])
   }
-  await executeCommand('Layout.openIntegratedTerminal')
-  await expect(page.getByText('Terminals are unavailable in this web workspace.', { exact: false })).toBeVisible()
-  await expect(errorView).toHaveCount(0)
-  await expectColor(previewCanvas, [50, 184, 255, 255])
-  await executeCommand('Layout.hidePanel')
   const source = await readFile(join(import.meta.dirname, '../../src/main.ts'), 'utf8')
   expect(navigationErrors(errors)).toEqual([])
   const resourceCounts = async (): Promise<{ contexts: number; timers: number }> => {
-    const worker = page.workers().find((worker) => worker.url().includes('/preview-sandbox-worker/'))
-    if (!worker) throw new Error('Sandbox worker is missing')
-    return worker.evaluate(() => {
-      const resources = Object.getOwnPropertyDescriptor(globalThis, '__threejsTestResources')?.value
-      return { contexts: resources.contexts.size, timers: resources.timers.size }
-    })
+    const workers = page.workers().filter((worker) => worker.url().includes('/preview-sandbox-worker/'))
+    const counts = await Promise.all(
+      workers.map((worker) =>
+        worker.evaluate(() => {
+          const resources = Object.getOwnPropertyDescriptor(globalThis, '__threejsTestResources')?.value
+          return { contexts: resources.contexts.size, timers: resources.timers.size }
+        }),
+      ),
+    )
+    const total = { contexts: 0, timers: 0 }
+    for (const count of counts) {
+      total.contexts += count.contexts
+      total.timers += count.timers
+    }
+    return total
   }
   const contextsCount = async (): Promise<number> => {
     const counts = await resourceCounts()
@@ -302,11 +308,12 @@ try {
   await assertLeanStartup()
   const initialResources = await resourceCounts()
   const initialTimers = initialResources.timers
-  // Closing the final preview must release its context while the shared worker survives.
+  // Closing the final preview must release its contexts and sandbox worker.
   // eslint-disable-next-line e2e/no-direct-click -- exercises the native preview-tab disposal handler
   await page.getByRole('button', { exact: true, name: 'Close HTML Preview' }).click()
   await expect(previewCanvas).toHaveCount(0)
   await expect.poll(contextsCount).toBe(0)
+  await expect.poll(() => page.workers().filter((worker) => worker.url().includes('/preview-sandbox-worker/')).length).toBe(0)
   await executeCommand('Layout.showPreview', 'memfs:///threejs/index.html')
   await expectColor(previewCanvas, [50, 184, 255, 255])
   await expect.poll(contextsCount).toBe(1)
@@ -415,6 +422,13 @@ try {
   await expect(previewCanvas).toBeVisible()
   await expectColor(previewCanvas, [50, 184, 255, 255])
   expect(forbiddenWorkers).toEqual([])
+  // Opening a panel explicitly is outside the lean startup assertions above.
+  await executeCommand('Layout.openIntegratedTerminal')
+  await expect(page.getByRole('tab', { exact: true, name: 'Terminals' })).toHaveCount(0)
+  await expect(errorView).toHaveCount(0)
+  await expectColor(previewCanvas, [50, 184, 255, 255])
+  await executeCommand('Layout.hidePanel')
+  expect(errors.filter((error) => /(?:undefined.*send|send.*undefined)/.test(error))).toEqual([])
 } catch (error) {
   const artifacts = join(staticRoot, '..', 'e2e-artifacts')
   await mkdir(artifacts, { recursive: true })
