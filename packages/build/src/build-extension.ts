@@ -16,6 +16,7 @@ await esbuild.build({
   entryPoints: {
     extensionMain: join(extensionPath, 'src', 'extensionMain.ts'),
     compilerWorker: join(extensionPath, 'src', 'compilerWorker.ts'),
+    demoSyncRpcClient: join(extensionPath, 'src', 'demoSyncRpcClient.ts'),
   },
   external: ['electron', 'node:*'],
   format: 'esm',
