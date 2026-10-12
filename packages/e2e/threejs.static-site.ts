@@ -497,8 +497,11 @@ try {
     await expectColor(previewCanvas, [50, 184, 255, 255])
     await replaceSource(page, `${source}\nexport const typeMismatch: number = "invalid"\n`, false)
     await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain("Type 'string' is not assignable to type 'number'")
+    const firstEditStartedAt = Date.now()
     await replaceSource(page, source.replace('#32b8ff', '#ff0000'))
-    await expectColor(previewCanvas, [255, 0, 0, 255])
+    // This is the first saved edit after reload and includes cold WASM worker startup.
+    await expectColor(previewCanvas, [255, 0, 0, 255], 15_000)
+    process.stdout.write(`first edit after reload ${Date.now() - firstEditStartedAt}ms\n`)
     await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toBe('[]')
     expect(navigationErrors(errors)).toEqual([])
   }
