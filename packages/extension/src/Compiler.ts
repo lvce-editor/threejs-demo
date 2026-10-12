@@ -1,106 +1,76 @@
-import * as esbuild from 'esbuild-wasm'
-import { createBuildCache } from './BuildCache.ts'
+import type { ReadSource } from './CompilerRuntime.ts'
+import type { CompilerWorkerRequest, CompilerWorkerResponse } from './CompilerWorkerProtocol.ts'
+export type { ReadSource } from './CompilerRuntime.ts'
 
-export type ReadSource = (path: string) => Promise<string>
-
-export const compileScene = async (
-  build: (options: esbuild.BuildOptions) => Promise<esbuild.BuildResult>,
-  three: string,
-  readSource: ReadSource,
-): Promise<string> => {
-  const result = await build({
-    bundle: true,
-    entryPoints: ['/src/main.ts'],
-    format: 'iife',
-    keepNames: true,
-    minifyIdentifiers: true,
-    minifySyntax: true,
-    minifyWhitespace: true,
-    platform: 'browser',
-    plugins: [
-      {
-        name: 'threejs-workspace',
-        setup(build): void {
-          build.onResolve({ filter: /.*/ }, ({ importer, path }) => {
-            if (path === 'three') return { namespace: 'three', path: 'three' }
-            if (path === 'three/addons/controls/OrbitControls.js') {
-              return { namespace: 'workspace', path: '/node_modules/three/examples/jsm/controls/OrbitControls.js' }
-            }
-            if (importer && !path.startsWith('.')) return { errors: [{ text: `Unsupported package: ${path}` }] }
-            return { namespace: 'workspace', path: new URL(path, `https://workspace${importer || '/'}`).pathname }
-          })
-          build.onLoad({ filter: /.*/, namespace: 'three' }, () => ({ contents: three, loader: 'js' }))
-          build.onLoad({ filter: /.*/, namespace: 'workspace' }, async ({ path }) => ({
-            contents: await readSource(path),
-            loader: path.endsWith('.ts') ? 'ts' : 'js',
-          }))
-        },
-      },
-    ],
-    target: 'es2022',
-    treeShaking: true,
-    write: false,
-  })
-  const output = result.outputFiles?.[0]?.text
-  if (!output) throw new Error('Compiler returned no output')
-  return output
+interface PendingRequest {
+  readonly readSource: ReadSource
+  readonly reject: (error: Error) => void
+  readonly resolve: (code: string) => void
 }
 
-export const createCompiler = (): ((readSource: ReadSource) => Promise<string>) & { dispose: () => Promise<void> } => {
-  let initialized: Promise<void> | undefined
-  const loadThree = async (): Promise<string> => {
-    const response = await fetch(new URL('three.js', import.meta.url))
-    if (!response.ok) throw new Error(`Unable to load Three.js: ${response.status}`)
-    return response.text()
-  }
-  let threeSource: Promise<string> | undefined
-  let context: Promise<esbuild.BuildContext> | undefined
-  let currentReadSource: ReadSource
-  let tail: Promise<void> = Promise.resolve()
+const createWorker = (): Worker => new Worker(new URL('compilerWorker.js', import.meta.url), { type: 'module' })
+
+export const createCompiler = (
+  workerFactory: () => Worker = createWorker,
+): ((readSource: ReadSource) => Promise<string>) & { dispose: () => Promise<void> } => {
+  let worker: Worker | undefined
   let disposed = false
-  const build = async (options: esbuild.BuildOptions): Promise<esbuild.BuildResult> => {
-    context ||= esbuild.context(options)
-    const activeContext = await context
-    return activeContext.rebuild()
+  let nextRequestId = 0
+  const pending = new Map<number, PendingRequest>()
+  const failWorker = (error: Error): void => {
+    worker?.terminate()
+    worker = undefined
+    for (const request of pending.values()) request.reject(error)
+    pending.clear()
   }
-  const cachedBuild = createBuildCache(async (readSource) => {
-    if (disposed) throw new Error('Scene compiler is disposed')
-    initialized ||= esbuild.initialize({ wasmURL: new URL('esbuild.wasm', import.meta.url).href, worker: false })
-    threeSource ||= loadThree()
-    await initialized
-    const three = await threeSource
-    if (disposed) throw new Error('Scene compiler is disposed')
-    currentReadSource = readSource
-    return compileScene(build, three, (path) => currentReadSource(path))
-  })
-  const compile = (readSource: ReadSource): Promise<string> => {
-    const run = async (): Promise<string> => {
-      if (disposed) throw new Error('Scene compiler is disposed')
-      return cachedBuild(readSource)
-    }
-    // esbuild coalesces concurrent rebuilds. Serialize warm-up and saves so each
-    // save receives output from its own current source rather than an older build.
-    const previous = tail
-    const result = (async (): Promise<string> => {
-      await previous
-      return run()
-    })()
-    tail = (async (): Promise<void> => {
-      try {
-        await result
-      } catch {
-        // A failed scene must not prevent a later corrected save from compiling.
+  const ensureWorker = (): Worker => {
+    if (worker) return worker
+    const activeWorker = workerFactory()
+    worker = activeWorker
+    activeWorker.onmessage = ({ data }: MessageEvent<CompilerWorkerResponse>): void => {
+      if (data.type === 'read-source') {
+        const request = pending.get(data.compileId)
+        if (!request) return
+        void request.readSource(data.path).then(
+          (source) => activeWorker.postMessage({ requestId: data.requestId, source, type: 'read-source-result' }),
+          (error: unknown) => activeWorker.postMessage({ error: String(error), requestId: data.requestId, type: 'read-source-result' }),
+        )
+        return
       }
-    })()
-    return result
+      const request = pending.get(data.requestId)
+      if (!request) return
+      pending.delete(data.requestId)
+      if (data.type === 'compiled') request.resolve(data.code)
+      else request.reject(new Error(data.error))
+    }
+    activeWorker.onerror = (event): void => failWorker(new Error(event.message || 'Compiler worker failed'))
+    activeWorker.onmessageerror = (): void => failWorker(new Error('Unable to read compiler worker response'))
+    return activeWorker
+  }
+  const compile = (readSource: ReadSource): Promise<string> => {
+    if (disposed) return Promise.reject(new Error('Scene compiler is disposed'))
+    const requestId = ++nextRequestId
+    let activeWorker: Worker
+    try {
+      activeWorker = ensureWorker()
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)))
+    }
+    return new Promise<string>((resolve, reject) => {
+      pending.set(requestId, { readSource, reject, resolve })
+      const message: CompilerWorkerRequest = { requestId, type: 'compile' }
+      try {
+        activeWorker.postMessage(message)
+      } catch (error) {
+        pending.delete(requestId)
+        reject(error instanceof Error ? error : new Error(String(error)))
+      }
+    })
   }
   return Object.assign(compile, {
     dispose: async (): Promise<void> => {
       disposed = true
-      if (context) {
-        const activeContext = await context
-        await activeContext.dispose()
-      }
+      failWorker(new Error('Scene compiler is disposed'))
     },
   })
 }

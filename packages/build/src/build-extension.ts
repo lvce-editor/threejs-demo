@@ -13,7 +13,10 @@ await mkdir(outputDirectory, { recursive: true })
 
 await esbuild.build({
   bundle: true,
-  entryPoints: { extensionMain: join(extensionPath, 'src', 'extensionMain.ts') },
+  entryPoints: {
+    extensionMain: join(extensionPath, 'src', 'extensionMain.ts'),
+    compilerWorker: join(extensionPath, 'src', 'compilerWorker.ts'),
+  },
   external: ['electron', 'node:*'],
   format: 'esm',
   outdir: outputDirectory,

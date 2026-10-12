@@ -8,6 +8,7 @@ const context = await esbuild.context({
   bundle: true,
   entryPoints: {
     extensionMain: join(extensionPath, 'src', 'extensionMain.ts'),
+    compilerWorker: join(extensionPath, 'src', 'compilerWorker.ts'),
   },
   external: ['electron', 'node:*'],
   format: 'esm',
