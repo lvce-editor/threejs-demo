@@ -51,24 +51,11 @@ config.syntaxHighlightingWorkerUrl ||=
 if (!config.syntaxHighlightingWorkerUrl) throw new Error('Exported syntax highlighting worker URL not found')
 const configuredIndex = index.replace(configMatch[0], `${configMatch[1]}${JSON.stringify(config)}${configMatch[3]}`)
 const rendererProcessUrl = `${config.assetDir}/packages/renderer-process/dist/rendererProcessMain.js`
-// These fixed resources are otherwise requested serially while opening the editor.
-const startupPreloads = [
-  rendererProcessUrl,
-  `${config.assetDir}/packages/extension-management-worker/dist/extensionManagementWorkerMain.js`,
-  `${config.assetDir}/packages/file-system-worker/dist/fileSystemWorkerMain.js`,
-  `${config.assetDir}/packages/main-area-worker/dist/mainAreaWorkerMain.js`,
-  `${config.assetDir}/config/extensions.json`,
-  `${config.assetDir}/config/onLoadCommands.json`,
-  `${config.assetDir}/extensions/builtin.theme-slime/color-theme.json`,
-  `${config.assetDir}/extensions/builtin.threejs-demo/dist/workspace-preview.json`,
-]
-  .map((url) => `<link rel="preload" as="fetch" crossorigin href="${url}">`)
-  .join('\n')
 await writeFile(
   indexPath,
   configuredIndex
     .replace(`src="${rendererProcessUrl}"`, 'src="/threejs-demo/demo-main.js"')
-    .replace('</head>', `${startupPreloads}\n<script src="/threejs-demo/demo-startup.js"></script>\n</head>`),
+    .replace('</head>', '<script src="/threejs-demo/demo-startup.js"></script>\n</head>'),
 )
 // Pages cannot configure response headers. Establish isolation before starting
 // the editor so TypeScript uses its shared-memory transport, including Firefox.

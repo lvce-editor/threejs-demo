@@ -237,6 +237,9 @@ const navigationErrors = (errors: readonly string[]): string[] => {
   return errors.filter((error) => error.includes('Cannot navigate to child: child not found at index'))
 }
 
+const indexHtml = await readFile(join(staticRoot, 'index.html'), 'utf8')
+expect(indexHtml).not.toMatch(/<link\b[^>]*\brel=["']preload["']/i)
+
 const server = createServer((request, response) => {
   void handleRequest(request, response)
 })
@@ -546,6 +549,7 @@ try {
   await expectColor(previewCanvas, [50, 184, 255, 255])
   await executeCommand('Layout.hidePanel')
   expect(errors.filter((error) => /(?:undefined.*send|send.*undefined)/.test(error))).toEqual([])
+  expect(errors.filter((error) => /preloaded with link preload was not used within a few seconds/.test(error))).toEqual([])
 } catch (error) {
   const artifacts = join(staticRoot, '..', 'e2e-artifacts')
   await mkdir(artifacts, { recursive: true })
