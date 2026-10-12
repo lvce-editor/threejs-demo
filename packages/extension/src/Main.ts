@@ -17,7 +17,6 @@ const state: {
   previewOpened?: boolean
   rebuild?: () => Promise<void>
   disposeCompiler?: () => Promise<void>
-  warmCompiler?: () => Promise<string>
   changeSubscription?: { dispose: () => void }
   workspaceReady?: Promise<void>
 } = {
@@ -51,7 +50,6 @@ const prepareLanguageFeatures = async (): Promise<void> => {
   if (!state.initialized) return
   await executeCommand('ExtensionManagement.activateByEvent', 'onDiagnostic:typescript')
   await executeCommand('GetActiveEditor.updateDiagnostics')
-  void state.warmCompiler?.().catch(() => {})
 }
 
 const initializeWorkspace = async (): Promise<void> => {
@@ -68,7 +66,6 @@ const openDemo = async (): Promise<void> => {
   if (!state.initialized) {
     const compile = createCompiler()
     state.disposeCompiler = compile.dispose
-    state.warmCompiler = (): Promise<string> => compile((path) => readFile(`${workspace}${path}`))
     state.rebuild = createRebuilder({
       build: createInitialBuild(compile, (path) => readFile(`${workspace}${path}`)),
       publish: async (code) => {

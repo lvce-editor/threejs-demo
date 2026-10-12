@@ -260,6 +260,7 @@ const browser = await browserType.launch({
   ...(process.env.CI && browserType === firefox && { firefoxUserPrefs: { 'webgl.force-enabled': true } }),
 })
 const errors: string[] = [`browser ${browserType.name()} latency ${responseDelay}ms`]
+const compilerWasmRequests: string[] = []
 try {
   const page = await browser.newPage()
   page.on('crash', () => {
@@ -279,6 +280,7 @@ try {
   })
   page.on('response', (response) => {
     if (response.status() >= 400) errors.push(`${response.status()} ${response.url()}`)
+    if (response.url().endsWith('/esbuild.wasm')) compilerWasmRequests.push(response.url())
   })
   page.on('requestfailed', (request) => {
     errors.push(`${request.failure()?.errorText} ${request.url()}`)
@@ -325,6 +327,7 @@ try {
   })
   const assertLeanStartup = async (): Promise<void> => {
     expect(forbiddenWorkers).toEqual([])
+    expect(page.workers().filter((worker) => worker.url().endsWith('/compilerWorker.js'))).toHaveLength(0)
     expect(page.workers().filter((worker) => worker.url().endsWith('/typescriptWorkerMain.js'))).toHaveLength(0)
     expect(await page.evaluate(() => Object.getOwnPropertyDescriptor(globalThis, '__threejsStartup')?.value.visibleBars)).toEqual([])
     const icon = page.getByRole('tab', { exact: true, name: 'main.ts Close' }).locator('img.TabIcon')
@@ -416,6 +419,7 @@ try {
     await writeFile(process.env.THREEJS_DEMO_METRICS, JSON.stringify(await measureStartup(browser), null, 2))
   }
   await assertLeanStartup()
+  expect(compilerWasmRequests).toEqual([])
   expect(await page.evaluate(() => globalThis.crossOriginIsolated)).toBe(true)
   await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toBe('[]')
   const initialResources = await resourceCounts()
@@ -438,6 +442,8 @@ try {
   await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toBe('[]')
 
   await replaceSource(page, source.replace('#32b8ff', '#ff0000'))
+  await expect.poll(() => page.workers().filter((worker) => worker.url().endsWith('/compilerWorker.js')).length).toBe(1)
+  await expect.poll(() => compilerWasmRequests.length).toBe(1)
   await expectColor(previewCanvas, [255, 0, 0, 255])
   await replaceSource(page, source.replace('#32b8ff', '#00ff00'))
   await expectColor(previewCanvas, [0, 255, 0, 255], 30_000)
@@ -491,8 +497,11 @@ try {
     await expectColor(previewCanvas, [50, 184, 255, 255])
     await replaceSource(page, `${source}\nexport const typeMismatch: number = "invalid"\n`, false)
     await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain("Type 'string' is not assignable to type 'number'")
+    const firstEditStartedAt = Date.now()
     await replaceSource(page, source.replace('#32b8ff', '#ff0000'))
-    await expectColor(previewCanvas, [255, 0, 0, 255])
+    // This is the first saved edit after reload and includes cold WASM worker startup.
+    await expectColor(previewCanvas, [255, 0, 0, 255], 15_000)
+    process.stdout.write(`first edit after reload ${Date.now() - firstEditStartedAt}ms\n`)
     await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toBe('[]')
     expect(navigationErrors(errors)).toEqual([])
   }

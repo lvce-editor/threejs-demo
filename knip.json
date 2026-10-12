@@ -20,7 +20,7 @@
       "project": ["*.ts"]
     },
     "packages/extension": {
-      "entry": ["src/extensionMain.ts", "test/**/*.test.ts"],
+      "entry": ["src/compilerWorker.ts", "src/extensionMain.ts", "test/**/*.test.ts"],
       "project": ["src/**/*.ts", "test/**/*.ts"]
     },
     "packages/server": {

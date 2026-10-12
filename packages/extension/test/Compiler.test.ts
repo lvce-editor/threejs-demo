@@ -2,7 +2,8 @@ import * as esbuild from 'esbuild'
 import assert from 'node:assert/strict'
 import test, { mock } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { compileScene, createCompiler } from '../src/Compiler.ts'
+import { createCompiler } from '../src/Compiler.ts'
+import { compileScene } from '../src/CompilerRuntime.ts'
 
 void test('the scene compiler keeps used Three.js exports and removes unused ones', async () => {
   const threeBuild = await esbuild.build({
@@ -45,19 +46,65 @@ void test('incremental scene compilation reloads edited virtual source', async (
 })
 
 void test('a compiler for the prebuilt scene needs no runtime loading before an edited build', async () => {
-  const fetch = mock.method(globalThis, 'fetch', async () => {
-    throw new Error('The compiler loaded a runtime before compilation')
-  })
+  let created = 0
+  let terminated = 0
+  const worker = {
+    onerror: null,
+    onmessage: null,
+    onmessageerror: null,
+    postMessage: (): void => {},
+    terminate: (): void => {
+      terminated++
+    },
+  } as unknown as Worker
   try {
-    const compile = createCompiler()
+    const compile = createCompiler(() => {
+      created++
+      return worker
+    })
+    assert.equal(created, 0)
     await compile.dispose()
-    assert.equal(fetch.mock.callCount(), 0)
+    assert.equal(created, 0)
+    assert.equal(terminated, 0)
     await assert.rejects(
       compile(async () => ''),
       /Scene compiler is disposed/,
     )
-    assert.equal(fetch.mock.callCount(), 0)
   } finally {
-    fetch.mock.restore()
+    mock.restoreAll()
   }
+})
+
+void test('the first live compilation creates a worker and disposal settles pending work', async () => {
+  let created = 0
+  let terminated = 0
+  let messageHandler: Worker['onmessage']
+  const messages: unknown[] = []
+  const worker = {
+    onerror: null,
+    get onmessage() {
+      return messageHandler
+    },
+    set onmessage(handler: Worker['onmessage']) {
+      messageHandler = handler
+    },
+    onmessageerror: null,
+    postMessage: (message: unknown): void => {
+      messages.push(message)
+    },
+    terminate: (): void => {
+      terminated++
+    },
+  } as unknown as Worker
+  const compile = createCompiler(() => {
+    created++
+    return worker
+  })
+  assert.equal(created, 0)
+  const pending = compile(async () => 'source')
+  assert.equal(created, 1)
+  assert.deepEqual(messages, [{ requestId: 1, type: 'compile' }])
+  await compile.dispose()
+  await assert.rejects(pending, /Scene compiler is disposed/)
+  assert.equal(terminated, 1)
 })
