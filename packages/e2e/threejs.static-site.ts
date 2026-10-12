@@ -260,6 +260,7 @@ const browser = await browserType.launch({
   ...(process.env.CI && browserType === firefox && { firefoxUserPrefs: { 'webgl.force-enabled': true } }),
 })
 const errors: string[] = [`browser ${browserType.name()} latency ${responseDelay}ms`]
+const fontResponses: { status: number; url: string }[] = []
 const compilerWasmRequests: string[] = []
 try {
   const page = await browser.newPage()
@@ -279,6 +280,9 @@ try {
     if (message.type() === 'error' || message.type() === 'warning') errors.push(message.text())
   })
   page.on('response', (response) => {
+    if (response.url().includes('/fonts/FiraCode-VariableFont.ttf')) {
+      fontResponses.push({ status: response.status(), url: response.url() })
+    }
     if (response.status() >= 400) errors.push(`${response.status()} ${response.url()}`)
     if (response.url().endsWith('/esbuild.wasm')) compilerWasmRequests.push(response.url())
   })
@@ -381,6 +385,13 @@ try {
       { args, command, entry: `${assetDir}/packages/renderer-process/dist/rendererProcessMain.js` },
     )
   }
+  const assertFiraCode = async (targetPage: Page, responses: readonly { status: number; url: string }[]): Promise<void> => {
+    expect(await rendererCommand(targetPage, 'Preferences.get', ['editor.fontFamily'])).toBe("'Fira Code'")
+    const editor = targetPage.locator('.Editor')
+    expect(await editor.evaluate((element) => getComputedStyle(element).fontFamily)).toContain('Fira Code')
+    await expect.poll(() => responses.some(({ status, url }) => status === 200 && url.includes('/threejs-demo/'))).toBe(true)
+  }
+  await assertFiraCode(page, fontResponses)
   const previewCloseButtons = page.getByRole('button', { exact: true, name: 'Close HTML Preview' })
   for (let iteration = 0; iteration < 3; iteration++) {
     await executeCommand('Layout.showPreview', 'memfs:///threejs/index.html')
@@ -422,6 +433,15 @@ try {
   expect(compilerWasmRequests).toEqual([])
   expect(await page.evaluate(() => globalThis.crossOriginIsolated)).toBe(true)
   await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toBe('[]')
+  await replaceSource(page, `${source}\nexport const typeMismatch: number = "invalid"\n`, false)
+  await expect(typeMismatchRow).toBeVisible()
+  await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain("Type 'string' is not assignable to type 'number'")
+  await replaceSource(page, `${source}\nexport const typeMismatch: number = "invalid"\nexport type Unsafe = any\nPromise.resolve()\n`, false)
+  await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain("Type 'string' is not assignable to type 'number'")
+  await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain('Unexpected any')
+  await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain('Promises must be awaited')
+  await replaceSource(page, source, false)
+  await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toBe('[]')
   const initialResources = await resourceCounts()
   const initialTimers = initialResources.timers
   // Closing the final preview must release its contexts and sandbox worker.
@@ -433,14 +453,6 @@ try {
   await executeCommand('Layout.showPreview', 'memfs:///threejs/index.html')
   await expectColor(previewCanvas, [50, 184, 255, 255])
   await expect.poll(contextsCount).toBe(1)
-  await replaceSource(page, `${source}\nexport const typeMismatch: number = "invalid"\nexport type Unsafe = any\nPromise.resolve()\n`, false)
-  await expect(typeMismatchRow).toBeVisible()
-  await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain("Type 'string' is not assignable to type 'number'")
-  await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain('Unexpected any')
-  await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain('Promises must be awaited')
-  await replaceSource(page, source, false)
-  await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toBe('[]')
-
   await replaceSource(page, source.replace('#32b8ff', '#ff0000'))
   await expect.poll(() => page.workers().filter((worker) => worker.url().endsWith('/compilerWorker.js')).length).toBe(1)
   await expect.poll(() => compilerWasmRequests.length).toBe(1)
@@ -559,6 +571,26 @@ try {
   await executeCommand('Layout.hidePanel')
   expect(errors.filter((error) => /(?:undefined.*send|send.*undefined)/.test(error))).toEqual([])
   expect(errors.filter((error) => /preloaded with link preload was not used within a few seconds/.test(error))).toEqual([])
+
+  // Check an existing browser profile with an obsolete editor font in an
+  // isolated page, leaving the scene lifecycle stress sequence uninterrupted.
+  const existingProfilePage = await browser.newPage()
+  const existingProfileFontResponses: { status: number; url: string }[] = []
+  existingProfilePage.on('response', (response) => {
+    if (response.url().includes('/fonts/FiraCode-VariableFont.ttf')) {
+      existingProfileFontResponses.push({ status: response.status(), url: response.url() })
+    }
+  })
+  await existingProfilePage.addInitScript(() => {
+    const settings = JSON.parse(globalThis.localStorage.getItem('settings') || '{}')
+    settings['editor.fontFamily'] = 'monospace'
+    globalThis.localStorage.setItem('settings', JSON.stringify(settings))
+  })
+  await existingProfilePage.goto(url)
+  await existingProfilePage.waitForFunction(() => globalThis.crossOriginIsolated, undefined, { timeout: 5000 })
+  const existingProfileSource = existingProfilePage.locator('.EditorRow', { hasText: "import * as THREE from 'three'" })
+  await expect(existingProfileSource).toBeVisible()
+  await assertFiraCode(existingProfilePage, existingProfileFontResponses)
 } catch (error) {
   const artifacts = join(staticRoot, '..', 'e2e-artifacts')
   await mkdir(artifacts, { recursive: true })
