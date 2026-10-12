@@ -1,0 +1,123 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: read
+
+jobs:
+  create-release:
+    name: Create draft release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Create GitHub draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          draft: true
+
+  validate:
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: '.nvmrc'
+      - name: Compute node_modules cache key
+        id: nodeModulesCacheKey
+        run: echo "value=$(node packages/build/src/computeNodeModulesCacheKey.ts)" >> $GITHUB_OUTPUT
+        shell: bash
+      - uses: actions/cache@v6
+        id: node-modules-cache
+        with:
+          path: '**/node_modules'
+          key: ${{ runner.os }}-${{ runner.arch }}-node_modules-${{ steps.nodeModulesCacheKey.outputs.value }}
+      - run: npm ci
+        if: steps.node-modules-cache.outputs.cache-hit != 'true'
+      - run: npm run build
+      - run: npm test
+      - run: npm run type-check
+      - run: npm run lint
+      - name: Install Playwright system dependencies
+        if: runner.os == 'Linux'
+        run: sudo npx playwright install-deps chromium firefox
+        working-directory: packages/e2e
+      - name: Install Playwright browsers
+        if: steps.node-modules-cache.outputs.cache-hit != 'true'
+        run: npx playwright install chromium firefox
+        working-directory: packages/e2e
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: 0
+      - name: Test Chromium lifecycle and Pages latency
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            xvfb-run --auto-servernum npm run e2e:headless
+          else
+            npm run e2e:headless
+          fi
+        shell: bash
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: 0
+      - name: Test Chromium Pages latency
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            xvfb-run --auto-servernum npm run e2e:headless --workspace=packages/e2e
+          else
+            npm run e2e:headless --workspace=packages/e2e
+          fi
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: 0
+          THREEJS_DEMO_LATENCY_MS: 150
+      - name: Test Firefox scene lifecycle
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a npm run e2e:headless --workspace=packages/e2e
+          else
+            npm run e2e:headless --workspace=packages/e2e
+          fi
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: 0
+          THREEJS_DEMO_BROWSER: firefox
+      - name: Test Firefox Pages latency
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a npm run e2e:headless --workspace=packages/e2e
+          else
+            npm run e2e:headless --workspace=packages/e2e
+          fi
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: 0
+          THREEJS_DEMO_BROWSER: firefox
+          THREEJS_DEMO_LATENCY_MS: 150
+      - name: Upload browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-failure-${{ matrix.os }}
+          path: .tmp/e2e-artifacts
+          if-no-files-found: ignore
+
+  publish-release:
+    needs: validate
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "${GITHUB_REF_NAME}" --draft=false

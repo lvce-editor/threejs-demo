@@ -22,7 +22,9 @@ const locations = [
   join(root, 'package.json'),
   join(root, 'package-lock.json'),
   join(root, '.nvmrc'),
-  join(root, '.github/workflows/ci.yml'),
+  ...(await readdir(join(root, '.github/workflows')))
+    .filter((name) => name.endsWith('.yml') || name.endsWith('.yaml'))
+    .map((name) => join(root, '.github/workflows', name)),
   join(root, 'packages/build/src/computeNodeModulesCacheKey.ts'),
   ...(await getPackageManifests(join(root, 'packages'))),
 ].sort()
