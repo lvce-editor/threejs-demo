@@ -433,6 +433,15 @@ try {
   expect(compilerWasmRequests).toEqual([])
   expect(await page.evaluate(() => globalThis.crossOriginIsolated)).toBe(true)
   await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toBe('[]')
+  await replaceSource(page, `${source}\nexport const typeMismatch: number = "invalid"\n`, false)
+  await expect(typeMismatchRow).toBeVisible()
+  await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain("Type 'string' is not assignable to type 'number'")
+  await replaceSource(page, `${source}\nexport const typeMismatch: number = "invalid"\nexport type Unsafe = any\nPromise.resolve()\n`, false)
+  await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain("Type 'string' is not assignable to type 'number'")
+  await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain('Unexpected any')
+  await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain('Promises must be awaited')
+  await replaceSource(page, source, false)
+  await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toBe('[]')
   const initialResources = await resourceCounts()
   const initialTimers = initialResources.timers
   // Closing the final preview must release its contexts and sandbox worker.
@@ -444,18 +453,6 @@ try {
   await executeCommand('Layout.showPreview', 'memfs:///threejs/index.html')
   await expectColor(previewCanvas, [50, 184, 255, 255])
   await expect.poll(contextsCount).toBe(1)
-  // Wait for the TypeScript worker to publish its diagnostic before adding
-  // ESLint diagnostics. Both providers update this document asynchronously.
-  await replaceSource(page, `${source}\nexport const typeMismatch: number = "invalid"\n`, false)
-  await expect(typeMismatchRow).toBeVisible()
-  await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain("Type 'string' is not assignable to type 'number'")
-  await replaceSource(page, `${source}\nexport const typeMismatch: number = "invalid"\nexport type Unsafe = any\nPromise.resolve()\n`, false)
-  await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain("Type 'string' is not assignable to type 'number'")
-  await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain('Unexpected any')
-  await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain('Promises must be awaited')
-  await replaceSource(page, source, false)
-  await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toBe('[]')
-
   await replaceSource(page, source.replace('#32b8ff', '#ff0000'))
   await expect.poll(() => page.workers().filter((worker) => worker.url().endsWith('/compilerWorker.js')).length).toBe(1)
   await expect.poll(() => compilerWasmRequests.length).toBe(1)
