@@ -382,25 +382,13 @@ try {
       { args, command, entry: `${assetDir}/packages/renderer-process/dist/rendererProcessMain.js` },
     )
   }
-  const assertFiraCode = async (): Promise<void> => {
-    expect(await rendererCommand(page, 'Preferences.get', ['editor.fontFamily'])).toBe("'Fira Code'")
-    const editor = page.locator('.Editor')
+  const assertFiraCode = async (targetPage: Page, responses: readonly { status: number; url: string }[]): Promise<void> => {
+    expect(await rendererCommand(targetPage, 'Preferences.get', ['editor.fontFamily'])).toBe("'Fira Code'")
+    const editor = targetPage.locator('.Editor')
     expect(await editor.evaluate((element) => getComputedStyle(element).fontFamily)).toContain('Fira Code')
-    await expect.poll(() => fontResponses.some(({ status, url }) => status === 200 && url.includes('/threejs-demo/'))).toBe(true)
+    await expect.poll(() => responses.some(({ status, url }) => status === 200 && url.includes('/threejs-demo/'))).toBe(true)
   }
-  await assertFiraCode()
-  // Existing browser profiles can retain an editor font from before the demo
-  // fixed its settings. The startup script must continue to pin Fira Code.
-  await page.evaluate(() => {
-    const settings = JSON.parse(globalThis.localStorage.getItem('settings') || '{}')
-    settings['editor.fontFamily'] = 'monospace'
-    globalThis.localStorage.setItem('settings', JSON.stringify(settings))
-  })
-  await page.reload()
-  await expect(sourceFirstLine).toBeVisible()
-  await expect(previewCanvas).toBeVisible()
-  await expectColor(previewCanvas, [50, 184, 255, 255])
-  await assertFiraCode()
+  await assertFiraCode(page, fontResponses)
   const previewCloseButtons = page.getByRole('button', { exact: true, name: 'Close HTML Preview' })
   for (let iteration = 0; iteration < 3; iteration++) {
     await executeCommand('Layout.showPreview', 'memfs:///threejs/index.html')
@@ -573,6 +561,26 @@ try {
   await executeCommand('Layout.hidePanel')
   expect(errors.filter((error) => /(?:undefined.*send|send.*undefined)/.test(error))).toEqual([])
   expect(errors.filter((error) => /preloaded with link preload was not used within a few seconds/.test(error))).toEqual([])
+
+  // Check an existing browser profile with an obsolete editor font in an
+  // isolated page, leaving the scene lifecycle stress sequence uninterrupted.
+  const existingProfilePage = await browser.newPage()
+  const existingProfileFontResponses: { status: number; url: string }[] = []
+  existingProfilePage.on('response', (response) => {
+    if (response.url().includes('/fonts/FiraCode-VariableFont.ttf')) {
+      existingProfileFontResponses.push({ status: response.status(), url: response.url() })
+    }
+  })
+  await existingProfilePage.addInitScript(() => {
+    const settings = JSON.parse(globalThis.localStorage.getItem('settings') || '{}')
+    settings['editor.fontFamily'] = 'monospace'
+    globalThis.localStorage.setItem('settings', JSON.stringify(settings))
+  })
+  await existingProfilePage.goto(url)
+  await existingProfilePage.waitForFunction(() => globalThis.crossOriginIsolated, undefined, { timeout: 5000 })
+  const existingProfileSource = existingProfilePage.locator('.EditorRow', { hasText: "import * as THREE from 'three'" })
+  await expect(existingProfileSource).toBeVisible()
+  await assertFiraCode(existingProfilePage, existingProfileFontResponses)
 } catch (error) {
   const artifacts = join(staticRoot, '..', 'e2e-artifacts')
   await mkdir(artifacts, { recursive: true })
