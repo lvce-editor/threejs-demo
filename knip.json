@@ -6,13 +6,14 @@
       "ignoreDependencies": ["typescript-eslint", "@typescript-eslint/eslint-plugin"]
     },
     "packages/build": {
-      "project": ["src/**/*.ts"],
+      "project": ["src/**/*.ts", "test/**/*.ts"],
       "ignoreDependencies": [
         "@lvce-editor/extension-management-worker",
         "@lvce-editor/preview-sandbox-worker",
         "@lvce-editor/preview-worker",
         "@lvce-editor/renderer-process"
-      ]
+      ],
+      "entry": ["src/build-extension.ts", "src/build-static-site.ts", "src/computeNodeModulesCacheKey.ts", "src/dev.ts", "test/**/*.test.ts"]
     },
     "packages/e2e": {
       "entry": ["threejs.static-site.ts"],

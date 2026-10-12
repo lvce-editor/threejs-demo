@@ -72,20 +72,24 @@ await writeFile(
 )
 // Pages cannot configure response headers. Establish isolation before starting
 // the editor so TypeScript uses its shared-memory transport, including Firefox.
-await writeFile(
-  join(root, 'dist', 'demo-main.js'),
-  `if (!crossOriginIsolated) {
-  await navigator.serviceWorker.register('/threejs-demo/demo-isolation.js', { scope: '/threejs-demo/' })
-  await navigator.serviceWorker.ready
-  if (!navigator.serviceWorker.controller) {
-    await new Promise(resolve => navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true }))
-  }
+const bootstrap = await build({
+  bundle: true,
+  external: [rendererProcessUrl],
+  format: 'esm',
+  stdin: {
+    contents: `import { registerIsolationWorker } from './registerIsolationWorker.ts'
+if (!crossOriginIsolated) {
+  await registerIsolationWorker(navigator.serviceWorker, '/threejs-demo/demo-isolation.js', '/threejs-demo/')
   location.reload()
 } else {
   await import(${JSON.stringify(rendererProcessUrl)})
 }
 `,
-)
+    resolveDir: join(root, 'packages', 'build', 'src'),
+  },
+  write: false,
+})
+await writeFile(join(root, 'dist', 'demo-main.js'), bootstrap.outputFiles[0].contents)
 await writeFile(
   join(root, 'dist', 'demo-isolation.js'),
   `self.addEventListener('install', event => event.waitUntil(self.skipWaiting()))

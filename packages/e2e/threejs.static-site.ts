@@ -24,6 +24,22 @@ const contentTypes: Readonly<Record<string, string>> = {
 }
 const sandboxInstrumentation = `{
   const timers = new Set()
+  const pointerRequests = []
+  const observedPorts = new WeakSet()
+  const addPortListener = MessagePort.prototype.addEventListener
+  MessagePort.prototype.addEventListener = function (type, ...args) {
+    if (type === 'message' && !observedPorts.has(this)) {
+      observedPorts.add(this)
+      addPortListener.call(this, type, event => {
+        const { method, params } = event.data || {}
+        if (typeof method === 'string' && method.startsWith('SandBox.handlePointer')) {
+          pointerRequests.push({ method, params })
+          if (pointerRequests.length > 64) pointerRequests.shift()
+        }
+      })
+    }
+    return addPortListener.call(this, type, ...args)
+  }
   const contexts = new Set()
   const nativeSetTimeout = globalThis.setTimeout
   const nativeClearTimeout = globalThis.clearTimeout
@@ -49,7 +65,7 @@ const sandboxInstrumentation = `{
     }
     return context
   }
-  Object.defineProperty(globalThis, '__threejsTestResources', { value: { contexts, timers } })
+  Object.defineProperty(globalThis, '__threejsTestResources', { value: { contexts, pointerRequests, timers } })
 }
 `
 
@@ -240,9 +256,18 @@ const browser = await browserType.launch({
   // GPU-less CI runners otherwise reject WebGL2 with AllowWebgl2:false.
   ...(process.env.CI && browserType === firefox && { firefoxUserPrefs: { 'webgl.force-enabled': true } }),
 })
-const errors: string[] = []
+const errors: string[] = [`browser ${browserType.name()} latency ${responseDelay}ms`]
 try {
   const page = await browser.newPage()
+  page.on('crash', () => {
+    errors.push('page crashed')
+  })
+  page.on('close', () => {
+    errors.push('page closed')
+  })
+  page.on('framenavigated', (frame) => {
+    if (frame === page.mainFrame()) errors.push(`main frame navigated ${frame.url()}`)
+  })
   page.on('pageerror', (error) => {
     errors.push(error.stack || error.message)
   })
@@ -266,10 +291,22 @@ try {
   await verifyFirefoxCompilerWarnings(url)
   const sourceFirstLine = page.locator('.EditorRow', { hasText: "import * as THREE from 'three'" })
   const previewCanvas = page.locator('.Viewlet.Preview #scene')
+  const typeMismatchRow = page.locator('.EditorRow', { hasText: 'export const typeMismatch:' })
   const errorView = page.locator('.ViewletErrorMessage')
 
   await page.addInitScript(() => {
-    const startup = { visibleBars: [] as string[] }
+    const startup = { pointerEvents: [] as unknown[], visibleBars: [] as string[] }
+    for (const type of ['pointerdown', 'pointermove', 'pointerup'] as const) {
+      globalThis.document.addEventListener(
+        type,
+        ({ clientX, clientY, target, type }) => {
+          if (!(target instanceof HTMLElement) || !target.closest('.Preview')) return
+          startup.pointerEvents.push({ id: target.dataset.id, type, x: clientX, y: clientY })
+          if (startup.pointerEvents.length > 64) startup.pointerEvents.shift()
+        },
+        { capture: true },
+      )
+    }
     Object.defineProperty(globalThis, '__threejsStartup', { value: startup })
     const observe = (): void => {
       for (const selector of ['.ActivityBar', '.StatusBar']) {
@@ -294,16 +331,37 @@ try {
   }
   await page.goto(url)
   try {
+    // The bootstrap document installs isolation and reloads before opening the editor.
+    const isolatedDocument = await page.waitForFunction(() => globalThis.crossOriginIsolated, undefined, { timeout: 5000 })
+    await isolatedDocument.dispose()
     await expect(sourceFirstLine).toBeVisible()
   } catch (error) {
     const artifacts = join(staticRoot, '..', 'e2e-artifacts')
     await mkdir(artifacts, { recursive: true })
+    const startupState = await page.evaluate(async () => {
+      const registrations = await globalThis.navigator.serviceWorker.getRegistrations()
+      return {
+        controller: globalThis.navigator.serviceWorker.controller?.scriptURL,
+        crossOriginIsolated: globalThis.crossOriginIsolated,
+        readyState: globalThis.document.readyState,
+        registrations: registrations.map((registration) => ({
+          active: registration.active?.state,
+          installing: registration.installing?.state,
+          scope: registration.scope,
+          waiting: registration.waiting?.state,
+        })),
+        requests: globalThis.performance.getEntriesByType('resource').map((entry) => ({ duration: entry.duration, name: entry.name })),
+        url: globalThis.location.href,
+      }
+    })
+    await writeFile(join(artifacts, 'startup-state.json'), JSON.stringify(startupState, null, 2))
     await writeFile(join(artifacts, 'startup-errors.json'), JSON.stringify(errors, null, 2))
     await writeFile(join(artifacts, 'startup.html'), await page.content())
     await page.screenshot({ path: join(artifacts, 'startup.png') })
     throw error
   }
-  await expect(previewCanvas).toBeVisible({ timeout: 30_000 })
+  expect(await page.evaluate(() => globalThis.crossOriginIsolated)).toBe(true)
+  await expect(previewCanvas).toBeVisible()
   await expectColor(previewCanvas, [50, 184, 255, 255])
   await expectAnimation(previewCanvas)
   const executeCommand = async (command: string, ...args: unknown[]): Promise<void> => {
@@ -355,6 +413,8 @@ try {
     await writeFile(process.env.THREEJS_DEMO_METRICS, JSON.stringify(await measureStartup(browser), null, 2))
   }
   await assertLeanStartup()
+  expect(await page.evaluate(() => globalThis.crossOriginIsolated)).toBe(true)
+  await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toBe('[]')
   const initialResources = await resourceCounts()
   const initialTimers = initialResources.timers
   // Closing the final preview must release its contexts and sandbox worker.
@@ -367,6 +427,7 @@ try {
   await expectColor(previewCanvas, [50, 184, 255, 255])
   await expect.poll(contextsCount).toBe(1)
   await replaceSource(page, `${source}\nexport const typeMismatch: number = "invalid"\nexport type Unsafe = any\nPromise.resolve()\n`, false)
+  await expect(typeMismatchRow).toBeVisible()
   await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain("Type 'string' is not assignable to type 'number'")
   await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain('Unexpected any')
   await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain('Promises must be awaited')
@@ -387,6 +448,7 @@ try {
   await expectColor(previewCanvas, [50, 184, 255, 255], 30_000)
 
   for (let iteration = 0; iteration < 20; iteration++) {
+    errors.push(`resource cycle ${iteration}`)
     const red = iteration % 2 === 0
     await replaceSource(
       page,
@@ -406,7 +468,7 @@ try {
 
   await page.reload()
   await expect(sourceFirstLine).toBeVisible()
-  await expect(previewCanvas).toBeVisible({ timeout: 30_000 })
+  await expect(previewCanvas).toBeVisible()
   await expectColor(previewCanvas, [50, 184, 255, 255])
   await expectAnimation(previewCanvas)
   expect(errors.filter((error) => error.includes('Failed to hash ESLint files in one batch'))).toEqual([])
@@ -431,10 +493,10 @@ try {
     await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toBe('[]')
     expect(navigationErrors(errors)).toEqual([])
   }
-  const stableSource = source.replace('cube.rotation.y += 0.01', 'cube.rotation.y += 0')
+  const stableSource = source.replace('cube.rotation.y += 0.01', 'cube.rotation.y += 0').replace('#32b8ff', '#ffff00')
   await replaceSource(page, stableSource)
+  await expectColor(previewCanvas, [255, 255, 0, 255])
   await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toBe('[]')
-  await expectColor(previewCanvas, [50, 184, 255, 255])
   const previewBounds = await previewCanvas.boundingBox()
   if (!previewBounds) throw new Error('Preview canvas has no bounding box')
   const dragStart = await waitForCanvasScreenshot(previewCanvas)
@@ -487,11 +549,48 @@ try {
 } catch (error) {
   const artifacts = join(staticRoot, '..', 'e2e-artifacts')
   await mkdir(artifacts, { recursive: true })
+  await writeFile(join(artifacts, 'failure-assertion.txt'), error instanceof Error ? error.stack || error.message : String(error))
   await writeFile(join(artifacts, 'failure-errors.json'), JSON.stringify(errors, null, 2))
   const page = browser.contexts()[0]?.pages()[0]
   if (page) {
-    await writeFile(join(artifacts, 'failure.html'), await page.content())
-    await page.screenshot({ path: join(artifacts, 'failure.png') })
+    // Page evidence must survive independently of destroyed worker contexts.
+    try {
+      await writeFile(join(artifacts, 'failure.html'), await page.content())
+      await page.screenshot({ path: join(artifacts, 'failure.png') })
+    } catch (captureError) {
+      await writeFile(join(artifacts, 'page-capture-error.txt'), String(captureError))
+    }
+    try {
+      const typescript = page.workers().find((worker) => worker.url().endsWith('/typescriptWorkerMain.js'))
+      const textDocument = await rendererCommand(page, 'GetActiveEditor.getTextDocument')
+      const trace = typescript
+        ? await Promise.race([
+            typescript.evaluate(async (document) => {
+              const { commandMap } = await import(globalThis.location.href)
+              const firstPerformanceTrace = await commandMap['Diagnostic.getFirstPerformanceTrace'](document)
+              const directDiagnostics = await commandMap['Diagnostic.getDiagnostics'](document)
+              return { directDiagnostics, firstPerformanceTrace }
+            }, textDocument),
+            (async (): Promise<never> => {
+              await delay(10_000, undefined, { ref: false })
+              throw new Error('TypeScript failure trace timed out after 10 seconds')
+            })(),
+          ])
+        : { workerMissing: true }
+      await writeFile(join(artifacts, 'typescript-failure-trace.json'), JSON.stringify({ textDocument, trace }, null, 2))
+    } catch (traceError) {
+      await writeFile(join(artifacts, 'typescript-failure-trace.json'), JSON.stringify({ error: String(traceError) }, null, 2))
+    }
+    try {
+      const sandbox = page.workers().find((worker) => worker.url().includes('/preview-sandbox-worker/'))
+      const pointerRequests = sandbox
+        ? await sandbox.evaluate(() => Object.getOwnPropertyDescriptor(globalThis, '__threejsTestResources')?.value.pointerRequests)
+        : []
+      const pointerEvents = await page.evaluate(() => Object.getOwnPropertyDescriptor(globalThis, '__threejsStartup')?.value.pointerEvents)
+      await writeFile(join(artifacts, 'pointer-events.json'), JSON.stringify({ pointerEvents, pointerRequests }, null, 2))
+    } catch (captureError) {
+      await writeFile(join(artifacts, 'failure-capture-error.txt'), String(captureError))
+    }
   }
   throw error
 } finally {
