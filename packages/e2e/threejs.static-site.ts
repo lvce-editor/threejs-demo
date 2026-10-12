@@ -440,8 +440,12 @@ try {
   await executeCommand('Layout.showPreview', 'memfs:///threejs/index.html')
   await expectColor(previewCanvas, [50, 184, 255, 255])
   await expect.poll(contextsCount).toBe(1)
-  await replaceSource(page, `${source}\nexport const typeMismatch: number = "invalid"\nexport type Unsafe = any\nPromise.resolve()\n`, false)
+  // Wait for the TypeScript worker to publish its diagnostic before adding
+  // ESLint diagnostics. Both providers update this document asynchronously.
+  await replaceSource(page, `${source}\nexport const typeMismatch: number = "invalid"\n`, false)
   await expect(typeMismatchRow).toBeVisible()
+  await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain("Type 'string' is not assignable to type 'number'")
+  await replaceSource(page, `${source}\nexport const typeMismatch: number = "invalid"\nexport type Unsafe = any\nPromise.resolve()\n`, false)
   await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain("Type 'string' is not assignable to type 'number'")
   await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain('Unexpected any')
   await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain('Promises must be awaited')
