@@ -50,50 +50,7 @@ config.syntaxHighlightingWorkerUrl ||=
   config.workerUrls['develop.syntaxHighlightingWorkerPath'] || config.workerUrls['developer.syntaxHighlightingWorkerPath']
 if (!config.syntaxHighlightingWorkerUrl) throw new Error('Exported syntax highlighting worker URL not found')
 const configuredIndex = index.replace(configMatch[0], `${configMatch[1]}${JSON.stringify(config)}${configMatch[3]}`)
-const rendererProcessUrl = `${config.assetDir}/packages/renderer-process/dist/rendererProcessMain.js`
-await writeFile(
-  indexPath,
-  configuredIndex
-    .replace(`src="${rendererProcessUrl}"`, 'src="/threejs-demo/demo-main.js"')
-    .replace('</head>', '<script src="/threejs-demo/demo-startup.js"></script>\n</head>'),
-)
-// Pages cannot configure response headers. Establish isolation before starting
-// the editor so TypeScript uses its shared-memory transport, including Firefox.
-const bootstrap = await build({
-  bundle: true,
-  external: [rendererProcessUrl],
-  format: 'esm',
-  stdin: {
-    contents: `import { registerIsolationWorker } from './registerIsolationWorker.ts'
-if (!crossOriginIsolated) {
-  await registerIsolationWorker(navigator.serviceWorker, '/threejs-demo/demo-isolation.js', '/threejs-demo/')
-  location.reload()
-} else {
-  await import(${JSON.stringify(rendererProcessUrl)})
-}
-`,
-    resolveDir: join(root, 'packages', 'build', 'src'),
-  },
-  write: false,
-})
-await writeFile(join(root, 'dist', 'demo-main.js'), bootstrap.outputFiles[0].contents)
-await writeFile(
-  join(root, 'dist', 'demo-isolation.js'),
-  `self.addEventListener('install', event => event.waitUntil(self.skipWaiting()))
-self.addEventListener('activate', event => event.waitUntil(self.clients.claim()))
-self.addEventListener('fetch', event => {
-  if (new URL(event.request.url).origin !== self.location.origin) return
-  event.respondWith((async () => {
-    const response = await fetch(event.request)
-    if (response.status === 0) return response
-    const headers = new Headers(response.headers)
-    headers.set('Cross-Origin-Opener-Policy', 'same-origin')
-    headers.set('Cross-Origin-Embedder-Policy', 'require-corp')
-    return new Response(response.body, { headers, status: response.status, statusText: response.statusText })
-  })())
-})
-`,
-)
+await writeFile(indexPath, configuredIndex.replace('</head>', '<script src="/threejs-demo/demo-startup.js"></script>\n</head>'))
 
 // This exported application always runs on the web, including eager module initialization.
 const rendererPath = join(root, 'dist', commitHash, 'packages', 'renderer-worker', 'dist', 'rendererWorkerMain.js')
@@ -182,6 +139,18 @@ if (!languageExtension.includes(launchWorker) || !languageExtension.includes('co
 await writeFile(
   languageExtensionPath,
   languageExtension.replace(launchWorker, `${launchWorker}\n  await executeCommand$1('threejs.prepareLanguageFeatures');`),
+)
+// The demo's fixed project files are already shipped as JSON. Serve TypeScript's
+// synchronous host reads from that snapshot; edited text stays in its live
+// document store. This avoids cross-worker OPFS locks and isolation on Firefox.
+const typescriptWorkerPath = join(root, 'dist', commitHash, 'extensions', 'builtin.language-features-typescript', 'typescriptWorkerMain.js')
+const typescriptWorker = await readFile(typescriptWorkerPath, 'utf8')
+const transportStart = typescriptWorker.indexOf('const createSyncRpcClient = async ({')
+const transportEnd = typescriptWorker.indexOf('const getTypeScriptPath = ', transportStart)
+if (transportStart === -1 || transportEnd === -1) throw new Error('TypeScript synchronous transport hook not found')
+await writeFile(
+  typescriptWorkerPath,
+  `import { createDemoSyncRpcClient } from '../builtin.threejs-demo/dist/demoSyncRpcClient.js'\n${typescriptWorker.slice(0, transportStart)}const createSyncRpcClient = createDemoSyncRpcClient;\n${typescriptWorker.slice(transportEnd)}`,
 )
 const compilerPath = join(root, 'dist', commitHash, 'extensions', 'builtin.language-features-typescript', 'typescript', 'lib', 'typescript-esm.js')
 await writeFile(compilerPath, removeUnreachableTypeScriptCode(await readFile(compilerPath, 'utf8')))

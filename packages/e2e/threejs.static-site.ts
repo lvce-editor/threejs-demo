@@ -89,6 +89,18 @@ const getFilePath = (requestUrl: string): string | undefined => {
 
 const handleRequest = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
   if (responseDelay) await delay(responseDelay)
+  if (new URL(request.url || '', 'http://localhost').pathname === `${pathPrefix}/demo-isolation.js`) {
+    response.writeHead(200, { 'Content-Type': 'text/javascript' })
+    response.end(`self.addEventListener('install', event => event.waitUntil(self.skipWaiting()))
+self.addEventListener('activate', event => event.waitUntil(self.clients.claim()))
+self.addEventListener('fetch', event => event.respondWith(fetch(event.request).then(response => {
+  const headers = new Headers(response.headers)
+  headers.set('Cross-Origin-Opener-Policy', 'same-origin')
+  headers.set('Cross-Origin-Embedder-Policy', 'require-corp')
+  return new Response(response.body, { headers, status: response.status, statusText: response.statusText })
+})))`)
+    return
+  }
   const filePath = getFilePath(request.url || '')
   if (!filePath) {
     response.writeHead(404)
@@ -340,37 +352,18 @@ try {
     await expect.poll(() => icon.evaluate((element: HTMLImageElement) => element.complete && element.naturalWidth > 0)).toBe(true)
   }
   await page.goto(url)
-  try {
-    // The bootstrap document installs isolation and reloads before opening the editor.
-    const isolatedDocument = await page.waitForFunction(() => globalThis.crossOriginIsolated, undefined, { timeout: 5000 })
-    await isolatedDocument.dispose()
-    await expect(sourceFirstLine).toBeVisible()
-  } catch (error) {
-    const artifacts = join(staticRoot, '..', 'e2e-artifacts')
-    await mkdir(artifacts, { recursive: true })
-    const startupState = await page.evaluate(async () => {
+  await expect(sourceFirstLine).toBeVisible()
+  expect(await page.evaluate(() => globalThis.crossOriginIsolated)).toBe(false)
+  expect(await page.evaluate(() => globalThis.navigator.serviceWorker.controller)).toBeNull()
+  expect(
+    await page.evaluate(async () => {
       const registrations = await globalThis.navigator.serviceWorker.getRegistrations()
-      return {
-        controller: globalThis.navigator.serviceWorker.controller?.scriptURL,
-        crossOriginIsolated: globalThis.crossOriginIsolated,
-        readyState: globalThis.document.readyState,
-        registrations: registrations.map((registration) => ({
-          active: registration.active?.state,
-          installing: registration.installing?.state,
-          scope: registration.scope,
-          waiting: registration.waiting?.state,
-        })),
-        requests: globalThis.performance.getEntriesByType('resource').map((entry) => ({ duration: entry.duration, name: entry.name })),
-        url: globalThis.location.href,
-      }
-    })
-    await writeFile(join(artifacts, 'startup-state.json'), JSON.stringify(startupState, null, 2))
-    await writeFile(join(artifacts, 'startup-errors.json'), JSON.stringify(errors, null, 2))
-    await writeFile(join(artifacts, 'startup.html'), await page.content())
-    await page.screenshot({ path: join(artifacts, 'startup.png') })
-    throw error
-  }
-  expect(await page.evaluate(() => globalThis.crossOriginIsolated)).toBe(true)
+      return registrations.length
+    }),
+  ).toBe(0)
+  expect(await page.evaluate(() => (globalThis.performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined)?.type)).toBe(
+    'navigate',
+  )
   await expect(previewCanvas).toBeVisible()
   await expectColor(previewCanvas, [50, 184, 255, 255])
   await expectAnimation(previewCanvas)
@@ -431,7 +424,6 @@ try {
   }
   await assertLeanStartup()
   expect(compilerWasmRequests).toEqual([])
-  expect(await page.evaluate(() => globalThis.crossOriginIsolated)).toBe(true)
   await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toBe('[]')
   await replaceSource(page, `${source}\nexport const typeMismatch: number = "invalid"\n`, false)
   await expect(typeMismatchRow).toBeVisible()
@@ -587,10 +579,24 @@ try {
     globalThis.localStorage.setItem('settings', JSON.stringify(settings))
   })
   await existingProfilePage.goto(url)
-  await existingProfilePage.waitForFunction(() => globalThis.crossOriginIsolated, undefined, { timeout: 5000 })
   const existingProfileSource = existingProfilePage.locator('.EditorRow', { hasText: "import * as THREE from 'three'" })
   await expect(existingProfileSource).toBeVisible()
+  expect(await existingProfilePage.evaluate(() => globalThis.crossOriginIsolated)).toBe(false)
   await assertFiraCode(existingProfilePage, existingProfileFontResponses)
+  await existingProfilePage.evaluate(async () => {
+    await globalThis.navigator.serviceWorker.register('/threejs-demo/demo-isolation.js', { scope: '/threejs-demo/' })
+    await globalThis.navigator.serviceWorker.ready
+  })
+  await existingProfilePage.reload()
+  await existingProfilePage.waitForFunction(() => globalThis.navigator.serviceWorker.controller?.scriptURL.endsWith('/demo-isolation.js'))
+  expect(await existingProfilePage.evaluate(() => globalThis.crossOriginIsolated)).toBe(true)
+  const existingProfilePreview = existingProfilePage.locator('.Viewlet.Preview #scene')
+  await expect(existingProfilePreview).toBeVisible()
+  await expect.poll(() => diagnostics(existingProfilePage), { timeout: 30_000 }).toBe('[]')
+  await replaceSource(existingProfilePage, `${source}\nexport const typeMismatch: number = "invalid"\n`, false)
+  await expect.poll(() => diagnostics(existingProfilePage), { timeout: 30_000 }).toContain("Type 'string' is not assignable to type 'number'")
+  await replaceSource(existingProfilePage, source.replace('#32b8ff', '#ff0000'))
+  await expectColor(existingProfilePreview, [255, 0, 0, 255], 15_000)
 } catch (error) {
   const artifacts = join(staticRoot, '..', 'e2e-artifacts')
   await mkdir(artifacts, { recursive: true })
