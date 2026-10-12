@@ -131,6 +131,7 @@ await writeFile(defaultSettingsPath, `${JSON.stringify(defaultSettings, null, 2)
 // demo settings before startup, including profiles with useOnLoadJson=false.
 const demoSettings = {
   'application.useOnLoadJson': true,
+  'editor.fontFamily': "'Fira Code'",
   'typescript.verifiedDiagnostics': defaultSettings['typescript.verifiedDiagnostics'],
   'eslint.ignoreHashes': defaultSettings['eslint.ignoreHashes'],
 }

@@ -260,6 +260,7 @@ const browser = await browserType.launch({
   ...(process.env.CI && browserType === firefox && { firefoxUserPrefs: { 'webgl.force-enabled': true } }),
 })
 const errors: string[] = [`browser ${browserType.name()} latency ${responseDelay}ms`]
+const fontResponses: { status: number; url: string }[] = []
 try {
   const page = await browser.newPage()
   page.on('crash', () => {
@@ -278,6 +279,9 @@ try {
     if (message.type() === 'error' || message.type() === 'warning') errors.push(message.text())
   })
   page.on('response', (response) => {
+    if (response.url().includes('/fonts/FiraCode-VariableFont.ttf')) {
+      fontResponses.push({ status: response.status(), url: response.url() })
+    }
     if (response.status() >= 400) errors.push(`${response.status()} ${response.url()}`)
   })
   page.on('requestfailed', (request) => {
@@ -378,6 +382,25 @@ try {
       { args, command, entry: `${assetDir}/packages/renderer-process/dist/rendererProcessMain.js` },
     )
   }
+  const assertFiraCode = async (): Promise<void> => {
+    expect(await rendererCommand(page, 'Preferences.get', ['editor.fontFamily'])).toBe("'Fira Code'")
+    const editor = page.locator('.Editor')
+    expect(await editor.evaluate((element) => getComputedStyle(element).fontFamily)).toContain('Fira Code')
+    await expect.poll(() => fontResponses.some(({ status, url }) => status === 200 && url.includes('/threejs-demo/'))).toBe(true)
+  }
+  await assertFiraCode()
+  // Existing browser profiles can retain an editor font from before the demo
+  // fixed its settings. The startup script must continue to pin Fira Code.
+  await page.evaluate(() => {
+    const settings = JSON.parse(globalThis.localStorage.getItem('settings') || '{}')
+    settings['editor.fontFamily'] = 'monospace'
+    globalThis.localStorage.setItem('settings', JSON.stringify(settings))
+  })
+  await page.reload()
+  await expect(sourceFirstLine).toBeVisible()
+  await expect(previewCanvas).toBeVisible()
+  await expectColor(previewCanvas, [50, 184, 255, 255])
+  await assertFiraCode()
   const previewCloseButtons = page.getByRole('button', { exact: true, name: 'Close HTML Preview' })
   for (let iteration = 0; iteration < 3; iteration++) {
     await executeCommand('Layout.showPreview', 'memfs:///threejs/index.html')
