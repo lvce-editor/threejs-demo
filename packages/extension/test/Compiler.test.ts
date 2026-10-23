@@ -25,6 +25,26 @@ void test('the scene compiler keeps used Three.js exports and removes unused one
   assert.doesNotMatch(output, /TextureLoader/)
 })
 
+void test('the scene compiler resolves the bundled text geometry and font', async () => {
+  const source =
+    "import { TextGeometry } from 'three/addons/geometries/TextGeometry.js'; import { Font } from 'three/addons/loaders/FontLoader.js'; import fontData from './helvetiker_regular.typeface.json'; console.log(new TextGeometry('LVCE', { font: new Font(fontData) }))"
+  const modules: Record<string, string> = {
+    '/node_modules/three/examples/jsm/geometries/TextGeometry.js':
+      "import { Font } from '../loaders/FontLoader.js'; export class TextGeometry { constructor(text, options) { this.font = options.font } }",
+    '/node_modules/three/examples/jsm/loaders/FontLoader.js':
+      "import { ShapePath } from 'three'; export class Font { constructor(data) { this.data = data } }",
+    '/src/helvetiker_regular.typeface.json': '{"glyphs":{}}',
+    '/src/main.ts': source,
+  }
+  const three = 'export class ShapePath {}'
+  const output = await compileScene(esbuild.build, three, async (path) => {
+    if (!(path in modules)) throw new Error(`Unexpected source path: ${path}`)
+    return modules[path]
+  })
+  assert.match(output, /LVCE/)
+  assert.match(output, /glyphs/)
+})
+
 void test('incremental scene compilation reloads edited virtual source', async () => {
   let source = "import { value } from 'three'; console.log(value, 'initial')"
   let context: esbuild.BuildContext | undefined
