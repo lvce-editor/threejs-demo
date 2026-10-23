@@ -472,7 +472,8 @@ try {
   await replaceSource(page, source.replace('#32b8ff', '#ff0000'))
   await expect.poll(() => page.workers().filter((worker) => worker.url().endsWith('/compilerWorker.js')).length).toBe(1)
   await expect.poll(() => compilerWasmRequests.length).toBe(1)
-  await expectColor(previewCanvas, [255, 0, 0, 255])
+  // The first edit loads and compiles esbuild.wasm; this can exceed the default timeout on ARM.
+  await expectColor(previewCanvas, [255, 0, 0, 255], 30_000)
   await replaceSource(page, source.replace('#32b8ff', '#00ff00'))
   await expectColor(previewCanvas, [0, 255, 0, 255], 30_000)
   await replaceSource(page, source.replace('#32b8ff', '#0000ff'))
