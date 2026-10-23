@@ -1,17 +1,21 @@
 // This transport is specific to the demo's fixed project. TypeScript overlays
 // current editor text in its document store before diagnostics and completions.
+import { workspacePath, workspaceUri } from './demoWorkspace.ts'
+
 interface DemoFileClient {
   invokeSync(method: string, ...params: readonly unknown[]): unknown
 }
 
-const workspace = 'memfs:///threejs'
-
 const toPath = (uri: unknown): string | undefined => {
   if (typeof uri !== 'string') return undefined
-  if (uri.startsWith('memfs:') && uri !== workspace && !uri.startsWith(`${workspace}/`)) return undefined
-  const path = uri.startsWith('memfs:') ? new URL(uri).pathname : uri
-  if (path === '/threejs' || path === '/threejs/') return '/'
-  return path.startsWith('/threejs/') ? path.slice('/threejs'.length).replace(/\/$/, '') : undefined
+  let path = uri
+  if (uri.startsWith('memfs:')) {
+    const url = new URL(uri)
+    if (url.hostname) return undefined
+    path = decodeURIComponent(url.pathname)
+  }
+  if (path === workspacePath || path === `${workspacePath}/`) return '/'
+  return path.startsWith(`${workspacePath}/`) ? path.slice(workspacePath.length).replace(/\/$/, '') : undefined
 }
 
 export const createDemoFileClient = async (files: Readonly<Record<string, string>>): Promise<DemoFileClient> => {
@@ -30,7 +34,7 @@ export const createDemoFileClient = async (files: Readonly<Record<string, string
   }
   return {
     invokeSync(method: string, ...params: readonly unknown[]): unknown {
-      if (method === 'SyncApi.getWorkspaceUri') return workspace
+      if (method === 'SyncApi.getWorkspaceUri') return workspaceUri
       if (method === 'FileCache.getHashes') {
         if (!Array.isArray(params[0])) throw new Error('Expected file URI list')
         return params[0].map((uri: unknown) => hashes.get(toPath(uri) || '') || null)

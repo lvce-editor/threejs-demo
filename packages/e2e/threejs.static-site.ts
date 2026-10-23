@@ -269,6 +269,7 @@ if (!address || typeof address === 'string') {
   throw new Error('Failed to start static test server')
 }
 
+const workspaceUri = 'memfs:///Three.js Demo | Lvce Editor'
 const browserType = process.env.THREEJS_DEMO_BROWSER === 'firefox' ? firefox : chromium
 const browser = await browserType.launch({
   headless: true,
@@ -415,7 +416,7 @@ try {
   expect(compilerWasmRequests).toEqual([])
   const previewCloseButtons = page.locator('.SimpleBrowserTabClose')
   for (let iteration = 0; iteration < 3; iteration++) {
-    await executeCommand('Layout.showPreview', 'memfs:///threejs/index.html')
+    await executeCommand('Layout.showPreview', `${workspaceUri}/index.html`)
     await expect(previewCloseButtons).toHaveCount(2)
     await expect(page).toHaveTitle('Three.js Demo | Lvce Editor')
     await expectColor(previewCanvas, [50, 184, 255, 255])
@@ -468,7 +469,7 @@ try {
   await expect(previewCanvas).toHaveCount(0)
   await expect.poll(() => page.workers().filter((worker) => worker.url().includes('/preview-sandbox-worker/')).length).toBe(0)
   await expect.poll(contextsCount).toBe(0)
-  await executeCommand('Layout.showPreview', 'memfs:///threejs/index.html')
+  await executeCommand('Layout.showPreview', `${workspaceUri}/index.html`)
   await expectColor(previewCanvas, [50, 184, 255, 255])
   await expect.poll(contextsCount).toBe(1)
   await replaceSource(page, source.replace('#32b8ff', '#ff0000'))
