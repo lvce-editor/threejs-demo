@@ -44,7 +44,20 @@ config.initialLayout = {
   secondarySideBarVisible: false,
   panelVisible: false,
 }
-config.staticFileIcons = { 'main.ts': `${config.assetDir}/extensions/builtin.vscode-icons/icons/file_type_typescript.svg` }
+const vscodeIcons = `${config.assetDir}/extensions/builtin.vscode-icons/icons`
+config.staticFileIcons = {
+  'main.ts': `${vscodeIcons}/file_type_typescript.svg`,
+  'folder:dist': `${vscodeIcons}/folder_type_dist.svg`,
+  'folder:node_modules': `${vscodeIcons}/folder_type_node.svg`,
+  'folder:src': `${vscodeIcons}/folder_type_src.svg`,
+  defaultFileIcon: `${vscodeIcons}/default_file.svg`,
+  defaultFolderIcon: `${vscodeIcons}/default_folder.svg`,
+}
+if (Array.isArray(config.preloadWorkers)) {
+  config.preloadWorkers = config.preloadWorkers.filter(
+    (worker: string) => !['activityBarWorker', 'statusBarWorker', 'iconThemeWorker'].includes(worker),
+  )
+}
 config.previewOutputEnabled = false
 config.syntaxHighlightingWorkerUrl ||=
   config.workerUrls['develop.syntaxHighlightingWorkerPath'] || config.workerUrls['developer.syntaxHighlightingWorkerPath']

@@ -385,7 +385,9 @@ try {
     await expect.poll(() => responses.some(({ status, url }) => status === 200 && url.includes('/threejs-demo/'))).toBe(true)
   }
   await assertFiraCode(page, fontResponses)
-  const previewCloseButtons = page.getByRole('button', { exact: true, name: 'Close HTML Preview' })
+  await assertLeanStartup()
+  expect(compilerWasmRequests).toEqual([])
+  const previewCloseButtons = page.locator('.SimpleBrowserTabClose')
   for (let iteration = 0; iteration < 3; iteration++) {
     await executeCommand('Layout.showPreview', 'memfs:///threejs/index.html')
     await expect(previewCloseButtons).toHaveCount(2)
@@ -422,8 +424,6 @@ try {
   if (process.env.THREEJS_DEMO_METRICS) {
     await writeFile(process.env.THREEJS_DEMO_METRICS, JSON.stringify(await measureStartup(browser), null, 2))
   }
-  await assertLeanStartup()
-  expect(compilerWasmRequests).toEqual([])
   await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toBe('[]')
   await replaceSource(page, `${source}\nexport const typeMismatch: number = "invalid"\n`, false)
   await expect(typeMismatchRow).toBeVisible()
@@ -438,7 +438,7 @@ try {
   const initialTimers = initialResources.timers
   // Closing the final preview must release its contexts and sandbox worker.
   // eslint-disable-next-line e2e/no-direct-click -- exercises the native preview-tab disposal handler
-  await page.getByRole('button', { exact: true, name: 'Close HTML Preview' }).click()
+  await page.locator('.PreviewCloseButton').click()
   await expect(previewCanvas).toHaveCount(0)
   await expect.poll(() => page.workers().filter((worker) => worker.url().includes('/preview-sandbox-worker/')).length).toBe(0)
   await expect.poll(contextsCount).toBe(0)
@@ -597,6 +597,47 @@ try {
   await expect.poll(() => diagnostics(existingProfilePage), { timeout: 30_000 }).toContain("Type 'string' is not assignable to type 'number'")
   await replaceSource(existingProfilePage, source.replace('#32b8ff', '#ff0000'))
   await expectColor(existingProfilePreview, [255, 0, 0, 255], 15_000)
+  const sidebar = page.locator('.SideBar')
+  const sidebarIcons = sidebar.locator('.FileIcon')
+  const assertSidebarIcons = async (iconCount = 8): Promise<void> => {
+    await expect(sidebar).toBeVisible()
+    await expect(page.getByRole('treeitem', { name: 'dist' })).toBeVisible()
+    await expect(page.getByRole('treeitem', { name: 'node_modules' })).toBeVisible()
+    await expect(page.getByRole('treeitem', { name: 'src' })).toBeVisible()
+    await expect(sidebarIcons).toHaveCount(iconCount)
+    await expect
+      .poll(() =>
+        sidebarIcons.evaluateAll((icons) => icons.every((icon) => icon instanceof HTMLImageElement && icon.complete && icon.naturalWidth > 0)),
+      )
+      .toBe(true)
+  }
+  await executeCommand('Layout.showSideBar')
+  await assertSidebarIcons()
+  const srcFolder = page.getByRole('treeitem', { name: 'src' })
+  // eslint-disable-next-line e2e/no-direct-click -- focuses the folder row before testing ArrowRight expansion
+  await srcFolder.click()
+  await srcFolder.press('ArrowRight')
+  await expect(page.getByRole('treeitem', { name: 'main.ts' })).toBeVisible()
+  await expect(sidebarIcons).toHaveCount(9)
+  await expect
+    .poll(() =>
+      sidebarIcons.evaluateAll((icons) => icons.every((icon) => icon instanceof HTMLImageElement && icon.complete && icon.naturalWidth > 0)),
+    )
+    .toBe(true)
+  await executeCommand('Layout.hideSideBar')
+  await expect(sidebar).toBeHidden()
+  await executeCommand('Layout.showSideBar')
+  await assertSidebarIcons()
+  // eslint-disable-next-line e2e/no-direct-click -- focuses the folder row before testing ArrowRight expansion
+  await srcFolder.click()
+  await srcFolder.press('ArrowRight')
+  await expect(page.getByRole('treeitem', { name: 'main.ts' })).toBeVisible()
+  await expect(sidebarIcons).toHaveCount(9)
+  await expect
+    .poll(() =>
+      sidebarIcons.evaluateAll((icons) => icons.every((icon) => icon instanceof HTMLImageElement && icon.complete && icon.naturalWidth > 0)),
+    )
+    .toBe(true)
 } catch (error) {
   const artifacts = join(staticRoot, '..', 'e2e-artifacts')
   await mkdir(artifacts, { recursive: true })
