@@ -475,7 +475,8 @@ try {
   await replaceSource(page, source.replace('#32b8ff', '#ff0000'))
   await expect.poll(() => page.workers().filter((worker) => worker.url().endsWith('/compilerWorker.js')).length).toBe(1)
   await expect.poll(() => compilerWasmRequests.length).toBe(1)
-  await expectColor(previewCanvas, [255, 0, 0, 255])
+  // The first edit loads and compiles esbuild.wasm; this can exceed the default timeout on ARM.
+  await expectColor(previewCanvas, [255, 0, 0, 255], 30_000)
   await replaceSource(page, source.replace('#32b8ff', '#00ff00'))
   await expectColor(previewCanvas, [0, 255, 0, 255], 30_000)
   await replaceSource(page, source.replace('#32b8ff', '#0000ff'))
@@ -619,7 +620,8 @@ try {
   await existingProfilePage.waitForFunction(() => globalThis.navigator.serviceWorker.controller?.scriptURL.endsWith('/demo-isolation.js'))
   expect(await existingProfilePage.evaluate(() => globalThis.crossOriginIsolated)).toBe(true)
   const existingProfilePreview = existingProfilePage.locator('.Viewlet.Preview #scene')
-  await expect(existingProfilePreview).toBeVisible()
+  // On ARM, the editor restores its preview after the service-worker reload asynchronously.
+  await expect(existingProfilePreview).toBeVisible({ timeout: 15_000 })
   await expect.poll(() => diagnostics(existingProfilePage), { timeout: 30_000 }).toBe('[]')
   await replaceSource(existingProfilePage, `${source}\nexport const typeMismatch: number = "invalid"\n`, false)
   await expect.poll(() => diagnostics(existingProfilePage), { timeout: 30_000 }).toContain("Type 'string' is not assignable to type 'number'")

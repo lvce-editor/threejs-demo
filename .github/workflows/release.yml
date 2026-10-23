@@ -27,11 +27,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-15, windows-2025]
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, windows-2025, windows-11-arm]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
+      - name: Report runner architecture
+        run: echo "$RUNNER_OS $RUNNER_ARCH"
+        shell: bash
       - uses: actions/setup-node@v6
         with:
           node-version-file: '.nvmrc'
@@ -71,6 +74,7 @@ jobs:
         env:
           PLAYWRIGHT_BROWSERS_PATH: 0
       - name: Test Chromium Pages latency
+        shell: bash
         run: |
           if [ "$RUNNER_OS" = Linux ]; then
             xvfb-run --auto-servernum npm run e2e:headless --workspace=packages/e2e
