@@ -3,6 +3,12 @@ import { createBuildCache } from './BuildCache.ts'
 
 export type ReadSource = (path: string) => Promise<string>
 
+const getLoader = (path: string): 'ts' | 'json' | 'js' => {
+  if (path.endsWith('.ts')) return 'ts'
+  if (path.endsWith('.json')) return 'json'
+  return 'js'
+}
+
 export const compileScene = async (
   build: (options: esbuild.BuildOptions) => Promise<esbuild.BuildResult>,
   three: string,
@@ -26,13 +32,19 @@ export const compileScene = async (
             if (path === 'three/addons/controls/OrbitControls.js') {
               return { namespace: 'workspace', path: '/node_modules/three/examples/jsm/controls/OrbitControls.js' }
             }
+            if (path === 'three/addons/loaders/FontLoader.js') {
+              return { namespace: 'workspace', path: '/node_modules/three/examples/jsm/loaders/FontLoader.js' }
+            }
+            if (path === 'three/addons/geometries/TextGeometry.js') {
+              return { namespace: 'workspace', path: '/node_modules/three/examples/jsm/geometries/TextGeometry.js' }
+            }
             if (importer && !path.startsWith('.')) return { errors: [{ text: `Unsupported package: ${path}` }] }
             return { namespace: 'workspace', path: new URL(path, `https://workspace${importer || '/'}`).pathname }
           })
           build.onLoad({ filter: /.*/, namespace: 'three' }, () => ({ contents: three, loader: 'js' }))
           build.onLoad({ filter: /.*/, namespace: 'workspace' }, async ({ path }) => ({
             contents: await readSource(path),
-            loader: path.endsWith('.ts') ? 'ts' : 'js',
+            loader: getLoader(path),
           }))
         },
       },

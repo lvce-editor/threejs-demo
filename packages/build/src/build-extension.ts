@@ -45,6 +45,7 @@ const files: Record<string, string> = {
   ...tooling,
   '/dist/three-dependencies.js': dependencies.outputFiles[0].text,
   '/src/main.ts': await readFile(join(root, 'src', 'main.ts'), 'utf8'),
+  '/src/helvetiker_regular.typeface.json': await readFile(join(root, 'src', 'helvetiker_regular.typeface.json'), 'utf8'),
   '/index.html': await readFile(join(root, 'index.html'), 'utf8'),
   '/package.json': JSON.stringify(
     {
@@ -58,6 +59,14 @@ const files: Record<string, string> = {
   ),
   '/node_modules/three/examples/jsm/controls/OrbitControls.js': await readFile(
     join(root, 'node_modules/three/examples/jsm/controls/OrbitControls.js'),
+    'utf8',
+  ),
+  '/node_modules/three/examples/jsm/loaders/FontLoader.js': await readFile(
+    join(root, 'node_modules/three/examples/jsm/loaders/FontLoader.js'),
+    'utf8',
+  ),
+  '/node_modules/three/examples/jsm/geometries/TextGeometry.js': await readFile(
+    join(root, 'node_modules/three/examples/jsm/geometries/TextGeometry.js'),
     'utf8',
   ),
   // Keep dependency declarations out of the editor language host's explicit root-file list.
@@ -76,6 +85,7 @@ const files: Record<string, string> = {
         strict: true,
         skipLibCheck: true,
         noEmit: true,
+        resolveJsonModule: true,
       },
       files: ['src/main.ts'],
       include: ['src'],
@@ -110,8 +120,6 @@ files['/dist/main.js'] = initialScene.outputFiles[0].text
 files['/dist/main.source.ts'] = files['/src/main.ts']
 await writeFile(join(outputDirectory, 'workspace.json'), `${JSON.stringify(files)}\n`)
 const previewFiles = Object.fromEntries(
-  Object.entries(files).filter(
-    ([path]) => !path.startsWith('/node_modules/') || path === '/node_modules/three/examples/jsm/controls/OrbitControls.js',
-  ),
+  Object.entries(files).filter(([path]) => !path.startsWith('/node_modules/') || path.startsWith('/node_modules/three/examples/jsm/')),
 )
 await writeFile(join(outputDirectory, 'workspace-preview.json'), `${JSON.stringify(previewFiles)}\n`)
