@@ -1,20 +1,19 @@
 import { createHash } from 'node:crypto'
 import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
 import { build } from 'esbuild'
 import { removeUnreachableTypeScriptCode } from './removeUnreachableTypeScriptCode.ts'
 import { root } from './root.ts'
 import { installExtension } from './installExtension.ts'
 
-const sharedProcessPath = join(root, 'node_modules', '@lvce-editor', 'shared-process', 'index.js')
-const sharedProcessUrl = pathToFileURL(sharedProcessPath).toString()
-const sharedProcess = await import(sharedProcessUrl)
+// @ts-expect-error The published shared-process package does not include TypeScript declarations.
+const sharedProcess = await import('@lvce-editor/shared-process/index.js')
 
 process.env.PATH_PREFIX = '/threejs-demo'
 // The exporter requires a test source directory, including in a fresh checkout.
 await mkdir(join(root, 'packages', 'e2e', 'src'), { recursive: true })
 const { commitHash } = await sharedProcess.exportStatic({
+  cspOptions: { allowExternalConnections: false },
   extensionPath: 'packages/extension',
   onLoadCommands: [
     { args: [], command: 'threejs.initializeWorkspace', name: 'Load Demo Files' },

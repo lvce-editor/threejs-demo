@@ -290,7 +290,7 @@ try {
     errors.push(error.stack || error.message)
   })
   page.on('console', (message) => {
-    if (message.type() === 'error' || message.type() === 'warning') errors.push(message.text())
+    if ((message.type() === 'error' || message.type() === 'warning') && !message.text().includes('https://example.com/')) errors.push(message.text())
   })
   page.on('response', (response) => {
     if (response.url().includes('/fonts/FiraCode-VariableFont.ttf')) {
@@ -300,7 +300,7 @@ try {
     if (response.url().endsWith('/esbuild.wasm')) compilerWasmRequests.push(response.url())
   })
   page.on('requestfailed', (request) => {
-    errors.push(`${request.failure()?.errorText} ${request.url()}`)
+    if (!request.url().startsWith('https://example.com/')) errors.push(`${request.failure()?.errorText} ${request.url()}`)
   })
   const forbiddenWorkers: string[] = []
   page.on('worker', (worker) => {
@@ -352,6 +352,27 @@ try {
     await expect.poll(() => icon.evaluate((element: HTMLImageElement) => element.complete && element.naturalWidth > 0)).toBe(true)
   }
   await page.goto(url)
+  const cspProbe = await page.evaluate(async () => {
+    const violationPromise = new Promise<{ blockedURI: string; directive: string }>((resolve) => {
+      globalThis.addEventListener(
+        'securitypolicyviolation',
+        (event) => resolve({ blockedURI: event.blockedURI, directive: event.effectiveDirective }),
+        { once: true },
+      )
+    })
+    const sameOriginResponse = await globalThis.fetch(globalThis.location.href)
+    let externalConnectionBlocked = false
+    try {
+      await globalThis.fetch('https://example.com/')
+    } catch {
+      externalConnectionBlocked = true
+    }
+    return { externalConnectionBlocked, sameOriginStatus: sameOriginResponse.status, violation: await violationPromise }
+  })
+  expect(cspProbe.sameOriginStatus).toBe(200)
+  expect(cspProbe.externalConnectionBlocked).toBe(true)
+  expect(cspProbe.violation.directive).toBe('connect-src')
+  expect(cspProbe.violation.blockedURI).toBe('https://example.com/')
   await expect(sourceFirstLine).toBeVisible()
   expect(await page.evaluate(() => globalThis.crossOriginIsolated)).toBe(false)
   expect(await page.evaluate(() => globalThis.navigator.serviceWorker.controller)).toBeNull()
