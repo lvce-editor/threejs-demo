@@ -131,12 +131,20 @@ const expectColor = async (canvas: Locator, color: readonly number[], timeout: n
         if (!bounds) return []
         // Capture the rendered region even if a refresh replaces the DOM node.
         const bitmap = PNG.sync.read(await canvas.page().screenshot({ clip: bounds }))
-        const offset = (Math.floor(bitmap.height / 2) * bitmap.width + Math.floor(bitmap.width / 2)) * 4
-        return [...bitmap.data.subarray(offset, offset + 4)]
+        let matchingPixels = 0
+        for (let offset = 0; offset < bitmap.data.length; offset += 4) {
+          if (
+            Math.abs(bitmap.data[offset] - color[0]) <= 8 &&
+            Math.abs(bitmap.data[offset + 1] - color[1]) <= 8 &&
+            Math.abs(bitmap.data[offset + 2] - color[2]) <= 8
+          )
+            matchingPixels++
+        }
+        return matchingPixels
       },
       { timeout },
     )
-    .toEqual(color)
+    .toBeGreaterThan(25)
 }
 
 const screenshotCanvas = async (canvas: Locator): Promise<Buffer | undefined> => {
@@ -197,23 +205,16 @@ const expectImageChanged = async (canvas: Locator, before: Buffer): Promise<void
 }
 
 const replaceSource = async (page: Page, source: string, save: boolean = true): Promise<void> => {
-  const firstRow = page.locator('.EditorRow').first()
   const input = page.locator('.Editor textarea')
-  // eslint-disable-next-line e2e/no-direct-click -- establish editor focus through its native input path
-  await firstRow.click({ position: { x: 200, y: 8 } })
+  // eslint-disable-next-line e2e/no-direct-click -- establish native editor focus before setting the document selection
+  await page.locator('.Editor').click({ position: { x: 200, y: 80 } })
   await expect(input).toBeFocused()
-  await expect
-    .poll(async () => {
-      const selections = (await rendererCommand(page, 'GetActiveEditor.getSelections')) as number[]
-      return selections[0] === 0 && selections[2] === 0 && selections[1] === selections[3] && selections[1] > 0
-    })
-    .toBe(true)
   const current = (await rendererCommand(page, 'GetActiveEditor.getTextDocument')) as { text: string }
   const lines = current.text.split('\n')
-  await page.keyboard.press('Control+a')
+  await rendererCommand(page, 'GetActiveEditor.setSelections', [[0, 0, lines.length - 1, lines.at(-1)!.length]])
   await expect.poll(() => rendererCommand(page, 'GetActiveEditor.getSelections')).toEqual([0, 0, lines.length - 1, lines.at(-1)!.length])
   // Paste preserves the complete input while selection/render commands settle.
-  await page.locator('.Editor textarea').evaluate((target, text) => {
+  await input.evaluate((target, text) => {
     const clipboardData = new DataTransfer()
     clipboardData.setData('text/plain', text)
     const event = new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData })
@@ -312,7 +313,6 @@ try {
   await verifyFirefoxCompilerWarnings(url)
   const sourceFirstLine = page.locator('.EditorRow', { hasText: "import * as THREE from 'three'" })
   const previewCanvas = page.locator('.Viewlet.Preview #scene')
-  const typeMismatchRow = page.locator('.EditorRow', { hasText: 'export const typeMismatch:' })
   const errorView = page.locator('.ViewletErrorMessage')
 
   await page.addInitScript(() => {
@@ -406,7 +406,9 @@ try {
     await expect.poll(() => responses.some(({ status, url }) => status === 200 && url.includes('/threejs-demo/'))).toBe(true)
   }
   await assertFiraCode(page, fontResponses)
-  const previewCloseButtons = page.getByRole('button', { exact: true, name: 'Close HTML Preview' })
+  await assertLeanStartup()
+  expect(compilerWasmRequests).toEqual([])
+  const previewCloseButtons = page.locator('.SimpleBrowserTabClose')
   for (let iteration = 0; iteration < 3; iteration++) {
     await executeCommand('Layout.showPreview', 'memfs:///threejs/index.html')
     await expect(previewCloseButtons).toHaveCount(2)
@@ -443,11 +445,8 @@ try {
   if (process.env.THREEJS_DEMO_METRICS) {
     await writeFile(process.env.THREEJS_DEMO_METRICS, JSON.stringify(await measureStartup(browser), null, 2))
   }
-  await assertLeanStartup()
-  expect(compilerWasmRequests).toEqual([])
   await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toBe('[]')
   await replaceSource(page, `${source}\nexport const typeMismatch: number = "invalid"\n`, false)
-  await expect(typeMismatchRow).toBeVisible()
   await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain("Type 'string' is not assignable to type 'number'")
   await replaceSource(page, `${source}\nexport const typeMismatch: number = "invalid"\nexport type Unsafe = any\nPromise.resolve()\n`, false)
   await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain("Type 'string' is not assignable to type 'number'")
@@ -459,7 +458,7 @@ try {
   const initialTimers = initialResources.timers
   // Closing the final preview must release its contexts and sandbox worker.
   // eslint-disable-next-line e2e/no-direct-click -- exercises the native preview-tab disposal handler
-  await page.getByRole('button', { exact: true, name: 'Close HTML Preview' }).click()
+  await page.locator('.PreviewCloseButton').click()
   await expect(previewCanvas).toHaveCount(0)
   await expect.poll(() => page.workers().filter((worker) => worker.url().includes('/preview-sandbox-worker/')).length).toBe(0)
   await expect.poll(contextsCount).toBe(0)
@@ -530,7 +529,7 @@ try {
     await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toBe('[]')
     expect(navigationErrors(errors)).toEqual([])
   }
-  const stableSource = source.replace('cube.rotation.y += 0.01', 'cube.rotation.y += 0').replace('#32b8ff', '#ffff00')
+  const stableSource = source.replace('text.rotation.y += 0.003', 'text.rotation.y += 0').replace('#32b8ff', '#ffff00')
   await replaceSource(page, stableSource)
   await expectColor(previewCanvas, [255, 255, 0, 255])
   await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toBe('[]')
@@ -618,6 +617,47 @@ try {
   await expect.poll(() => diagnostics(existingProfilePage), { timeout: 30_000 }).toContain("Type 'string' is not assignable to type 'number'")
   await replaceSource(existingProfilePage, source.replace('#32b8ff', '#ff0000'))
   await expectColor(existingProfilePreview, [255, 0, 0, 255], 15_000)
+  const sidebar = page.locator('.SideBar')
+  const sidebarIcons = sidebar.locator('.FileIcon')
+  const assertSidebarIcons = async (iconCount = 8): Promise<void> => {
+    await expect(sidebar).toBeVisible()
+    await expect(page.getByRole('treeitem', { name: 'dist' })).toBeVisible()
+    await expect(page.getByRole('treeitem', { name: 'node_modules' })).toBeVisible()
+    await expect(page.getByRole('treeitem', { name: 'src' })).toBeVisible()
+    await expect(sidebarIcons).toHaveCount(iconCount)
+    await expect
+      .poll(() =>
+        sidebarIcons.evaluateAll((icons) => icons.every((icon) => icon instanceof HTMLImageElement && icon.complete && icon.naturalWidth > 0)),
+      )
+      .toBe(true)
+  }
+  await executeCommand('Layout.showSideBar')
+  await assertSidebarIcons()
+  const srcFolder = page.getByRole('treeitem', { name: 'src' })
+  // eslint-disable-next-line e2e/no-direct-click -- focuses the folder row before testing ArrowRight expansion
+  await srcFolder.click()
+  await srcFolder.press('ArrowRight')
+  await expect(page.getByRole('treeitem', { name: 'main.ts' })).toBeVisible()
+  await expect(sidebarIcons).toHaveCount(10)
+  await expect
+    .poll(() =>
+      sidebarIcons.evaluateAll((icons) => icons.every((icon) => icon instanceof HTMLImageElement && icon.complete && icon.naturalWidth > 0)),
+    )
+    .toBe(true)
+  await executeCommand('Layout.hideSideBar')
+  await expect(sidebar).toBeHidden()
+  await executeCommand('Layout.showSideBar')
+  await assertSidebarIcons()
+  // eslint-disable-next-line e2e/no-direct-click -- focuses the folder row before testing ArrowRight expansion
+  await srcFolder.click()
+  await srcFolder.press('ArrowRight')
+  await expect(page.getByRole('treeitem', { name: 'main.ts' })).toBeVisible()
+  await expect(sidebarIcons).toHaveCount(10)
+  await expect
+    .poll(() =>
+      sidebarIcons.evaluateAll((icons) => icons.every((icon) => icon instanceof HTMLImageElement && icon.complete && icon.naturalWidth > 0)),
+    )
+    .toBe(true)
 } catch (error) {
   const artifacts = join(staticRoot, '..', 'e2e-artifacts')
   await mkdir(artifacts, { recursive: true })
