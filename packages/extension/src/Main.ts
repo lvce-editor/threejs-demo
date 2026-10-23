@@ -8,10 +8,11 @@ import {
   writeFile,
 } from '@lvce-editor/api'
 import { createCompiler } from './Compiler.ts'
+import { workspaceUri } from './demoWorkspace.ts'
 import { createInitialBuild } from './InitialBuild.ts'
 import { createRebuilder } from './Rebuilder.ts'
 
-const workspace = 'memfs:///threejs'
+const workspace = workspaceUri
 const state: {
   initialized: boolean
   previewOpened?: boolean

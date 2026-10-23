@@ -6,6 +6,7 @@ import { removeUnreachableTypeScriptCode } from './removeUnreachableTypeScriptCo
 import { root } from './root.ts'
 
 const require = createRequire(import.meta.url)
+const workspacePath = '/Three.js-Demo'
 
 export const workspaceTooling = async (): Promise<Record<string, string>> => {
   const files: Record<string, string> = {}
@@ -68,6 +69,6 @@ export const workspaceTooling = async (): Promise<Record<string, string>> => {
     files[`/node_modules/${name}/package.json`] = JSON.stringify({ name, main })
   }
   files['/eslint.config.js'] =
-    "import tseslint from 'typescript-eslint'\nexport default [...tseslint.configs.recommendedTypeChecked.map(config => ({ ...config, files: ['**/*.ts'] })), { files: ['**/*.ts'], languageOptions: { parserOptions: { project: ['./tsconfig.json'], tsconfigRootDir: '/threejs' } }, rules: { '@typescript-eslint/no-unused-vars': 'error' } }]\n"
+    `import tseslint from 'typescript-eslint'\nexport default [...tseslint.configs.recommendedTypeChecked.map(config => ({ ...config, files: ['**/*.ts'] })), { files: ['**/*.ts'], languageOptions: { parserOptions: { project: ['./tsconfig.json'], tsconfigRootDir: ${JSON.stringify(workspacePath)} } }, rules: { '@typescript-eslint/no-unused-vars': 'error' } }]\n`
   return files
 }

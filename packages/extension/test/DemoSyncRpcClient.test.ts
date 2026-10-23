@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import test from 'node:test'
 import { createDemoFileClient } from '../src/demoSyncRpcClient.ts'
+import { workspacePath, workspaceUri } from '../src/demoWorkspace.ts'
 
 void test('fixed project reads support URI and normalized paths, directories, and cache identities', async () => {
   const source = 'export const value = 1'
@@ -10,12 +11,13 @@ void test('fixed project reads support URI and normalized paths, directories, an
     '/src/main.ts': source,
     '/tsconfig.json': '{}',
   })
-  assert.equal(client.invokeSync('SyncApi.readFileSync', 'memfs:///threejs/src/main.ts'), source)
-  assert.equal(client.invokeSync('SyncApi.readFileSync', '/threejs/src/main.ts'), source)
-  assert.equal(client.invokeSync('SyncApi.exists', 'memfs:///threejs/node_modules/pkg'), true)
-  assert.deepEqual(client.invokeSync('SyncApi.readDirSync', 'memfs:///threejs/'), ['node_modules', 'src', 'tsconfig.json'])
-  assert.deepEqual(client.invokeSync('SyncApi.getDirectoriesSync', '/threejs/'), ['node_modules', 'src'])
-  assert.deepEqual(client.invokeSync('FileCache.getHashes', ['memfs:///threejs/src/main.ts', 'memfs:///threejs/missing.ts']), [
+  assert.equal(client.invokeSync('SyncApi.readFileSync', `${workspaceUri}/src/main.ts`), source)
+  assert.equal(client.invokeSync('SyncApi.readFileSync', new URL(`${workspaceUri}/src/main.ts`).href), source)
+  assert.equal(client.invokeSync('SyncApi.readFileSync', `${workspacePath}/src/main.ts`), source)
+  assert.equal(client.invokeSync('SyncApi.exists', `${workspaceUri}/node_modules/pkg`), true)
+  assert.deepEqual(client.invokeSync('SyncApi.readDirSync', `${workspaceUri}/`), ['node_modules', 'src', 'tsconfig.json'])
+  assert.deepEqual(client.invokeSync('SyncApi.getDirectoriesSync', `${workspacePath}/`), ['node_modules', 'src'])
+  assert.deepEqual(client.invokeSync('FileCache.getHashes', [`${workspaceUri}/src/main.ts`, `${workspaceUri}/missing.ts`]), [
     createHash('sha256').update(source).digest('hex'),
     null,
   ])
@@ -25,13 +27,13 @@ void test('missing files and other workspaces cannot alias the fixed project', a
   const client = await createDemoFileClient({ '/src/main.ts': 'original' })
   for (const uri of [
     'memfs:///elsewhere/src/main.ts',
-    'file:///threejs/src/main.ts',
-    'memfs://elsewhere/threejs/src/main.ts',
-    'memfs:///threejs/src/missing.ts',
+    `file://${workspacePath}/src/main.ts`,
+    `memfs://elsewhere${workspacePath}/src/main.ts`,
+    `${workspaceUri}/src/missing.ts`,
   ]) {
     assert.equal(client.invokeSync('SyncApi.exists', uri), false)
     assert.equal(client.invokeSync('SyncApi.readFileSync', uri), undefined)
   }
-  assert.throws(() => client.invokeSync('SyncApi.writeFile', 'memfs:///threejs/src/main.ts', 'edited'), /Unsupported demo file operation/)
-  assert.equal(client.invokeSync('SyncApi.readFileSync', 'memfs:///threejs/src/main.ts'), 'original')
+  assert.throws(() => client.invokeSync('SyncApi.writeFile', `${workspaceUri}/src/main.ts`, 'edited'), /Unsupported demo file operation/)
+  assert.equal(client.invokeSync('SyncApi.readFileSync', `${workspaceUri}/src/main.ts`), 'original')
 })

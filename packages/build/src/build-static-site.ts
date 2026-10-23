@@ -9,6 +9,7 @@ import { installExtension } from './installExtension.ts'
 // @ts-expect-error The published shared-process package does not include TypeScript declarations.
 const sharedProcess = await import('@lvce-editor/shared-process/index.js')
 
+const workspaceUri = 'memfs:///Three.js-Demo'
 process.env.PATH_PREFIX = '/threejs-demo'
 // The exporter requires a test source directory, including in a fresh checkout.
 await mkdir(join(root, 'packages', 'e2e', 'src'), { recursive: true })
@@ -17,7 +18,7 @@ const { commitHash } = await sharedProcess.exportStatic({
   extensionPath: 'packages/extension',
   onLoadCommands: [
     { args: [], command: 'threejs.initializeWorkspace', name: 'Load Demo Files' },
-    { args: ['memfs:///threejs'], command: 'Workspace.setPath', name: 'Open Demo Workspace' },
+    { args: [workspaceUri], command: 'Workspace.setPath', name: 'Open Demo Workspace' },
     {
       args: [],
       command: 'threejs.openDemo',
@@ -87,9 +88,9 @@ const textHash = (text: string): string => createHash('sha256').update(text).dig
 // Changed text/configuration resumes checking before the TypeScript worker is started.
 defaultSettings['typescript.verifiedDiagnostics'] = [
   {
-    uri: 'memfs:///threejs/src/main.ts',
+    uri: `${workspaceUri}/src/main.ts`,
     hash: textHash(workspaceFiles['/src/main.ts']),
-    configUri: 'memfs:///threejs/tsconfig.json',
+    configUri: `${workspaceUri}/tsconfig.json`,
     configHash: textHash(workspaceFiles['/tsconfig.json']),
   },
 ]
