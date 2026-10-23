@@ -1,6 +1,6 @@
 {
   "id": "builtin.threejs-demo",
-  "name": "Three.js Demo",
+  "name": "Three.js Demo | Lvce Editor",
   "description": "Rebuilds a TypeScript Three.js scene in the browser and opens a live preview",
   "browser": "dist/extensionMain.js",
   "contentSecurityPolicy": ["default-src 'none'", "script-src 'self' 'unsafe-eval'", "connect-src 'self'"],

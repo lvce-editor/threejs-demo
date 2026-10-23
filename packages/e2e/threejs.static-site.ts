@@ -377,6 +377,7 @@ try {
   expect(cspProbe.violation.directive).toBe('connect-src')
   expect(cspProbe.violation.blockedURI).toBe('https://example.com/')
   await expect(sourceFirstLine).toBeVisible()
+  await expect(page).toHaveTitle('Three.js Demo | Lvce Editor')
   expect(await page.evaluate(() => globalThis.crossOriginIsolated)).toBe(false)
   expect(await page.evaluate(() => globalThis.navigator.serviceWorker.controller)).toBeNull()
   expect(
@@ -416,6 +417,7 @@ try {
   for (let iteration = 0; iteration < 3; iteration++) {
     await executeCommand('Layout.showPreview', 'memfs:///threejs/index.html')
     await expect(previewCloseButtons).toHaveCount(2)
+    await expect(page).toHaveTitle('Three.js Demo | Lvce Editor')
     await expectColor(previewCanvas, [50, 184, 255, 255])
     // eslint-disable-next-line e2e/no-direct-click -- exercises the native preview-tab disposal handler
     await previewCloseButtons.last().click()
@@ -505,6 +507,7 @@ try {
 
   await page.reload()
   await expect(sourceFirstLine).toBeVisible()
+  await expect(page).toHaveTitle('Three.js Demo | Lvce Editor')
   await expect(previewCanvas).toBeVisible()
   await expectColor(previewCanvas, [50, 184, 255, 255])
   await expectAnimation(previewCanvas)
