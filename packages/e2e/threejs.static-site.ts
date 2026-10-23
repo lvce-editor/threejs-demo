@@ -252,6 +252,9 @@ const navigationErrors = (errors: readonly string[]): string[] => {
 
 const indexHtml = await readFile(join(staticRoot, 'index.html'), 'utf8')
 expect(indexHtml).not.toMatch(/<link\b[^>]*\brel=["']preload["']/i)
+const workspaceFiles = JSON.parse(await readFile(join(import.meta.dirname, '..', 'extension', 'dist', 'workspace.json'), 'utf8'))
+expect(workspaceFiles['/index.html']).toMatch(/<div>\s*<canvas id="scene" width="640" height="480"><\/canvas>\s*<\/div>/)
+expect(workspaceFiles['/index.html']).toMatch(/<\/div>\s*<p>Edit src\/main\.ts and save to rebuild this scene\.<\/p>/)
 
 const server = createServer((request, response) => {
   void handleRequest(request, response)
@@ -386,6 +389,7 @@ try {
     'navigate',
   )
   await expect(previewCanvas).toBeVisible()
+  await expect.poll(() => previewCanvas.evaluate((canvas) => canvas.parentElement?.tagName)).toBe('DIV')
   await expectColor(previewCanvas, [50, 184, 255, 255])
   await expectAnimation(previewCanvas)
   const executeCommand = async (command: string, ...args: unknown[]): Promise<void> => {
