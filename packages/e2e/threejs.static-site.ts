@@ -269,7 +269,7 @@ if (!address || typeof address === 'string') {
   throw new Error('Failed to start static test server')
 }
 
-const workspaceUri = 'memfs:///Three.js Demo | Lvce Editor'
+const workspaceUri = 'memfs:///Three.js-Demo'
 const browserType = process.env.THREEJS_DEMO_BROWSER === 'firefox' ? firefox : chromium
 const browser = await browserType.launch({
   headless: true,
@@ -378,7 +378,7 @@ try {
   expect(cspProbe.violation.directive).toBe('connect-src')
   expect(cspProbe.violation.blockedURI).toBe('https://example.com/')
   await expect(sourceFirstLine).toBeVisible()
-  await expect(page).toHaveTitle('Three.js Demo | Lvce Editor')
+  await expect(page).toHaveTitle('Three.js-Demo')
   expect(await page.evaluate(() => globalThis.crossOriginIsolated)).toBe(false)
   expect(await page.evaluate(() => globalThis.navigator.serviceWorker.controller)).toBeNull()
   expect(
@@ -418,7 +418,7 @@ try {
   for (let iteration = 0; iteration < 3; iteration++) {
     await executeCommand('Layout.showPreview', `${workspaceUri}/index.html`)
     await expect(previewCloseButtons).toHaveCount(2)
-    await expect(page).toHaveTitle('Three.js Demo | Lvce Editor')
+    await expect(page).toHaveTitle('Three.js-Demo')
     await expectColor(previewCanvas, [50, 184, 255, 255])
     // eslint-disable-next-line e2e/no-direct-click -- exercises the native preview-tab disposal handler
     await previewCloseButtons.last().click()
@@ -508,7 +508,7 @@ try {
 
   await page.reload()
   await expect(sourceFirstLine).toBeVisible()
-  await expect(page).toHaveTitle('Three.js Demo | Lvce Editor')
+  await expect(page).toHaveTitle('Three.js-Demo')
   await expect(previewCanvas).toBeVisible()
   await expectColor(previewCanvas, [50, 184, 255, 255])
   await expectAnimation(previewCanvas)

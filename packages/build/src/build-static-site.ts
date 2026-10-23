@@ -9,7 +9,7 @@ import { installExtension } from './installExtension.ts'
 // @ts-expect-error The published shared-process package does not include TypeScript declarations.
 const sharedProcess = await import('@lvce-editor/shared-process/index.js')
 
-const workspaceUri = 'memfs:///Three.js Demo | Lvce Editor'
+const workspaceUri = 'memfs:///Three.js-Demo'
 process.env.PATH_PREFIX = '/threejs-demo'
 // The exporter requires a test source directory, including in a fresh checkout.
 await mkdir(join(root, 'packages', 'e2e', 'src'), { recursive: true })

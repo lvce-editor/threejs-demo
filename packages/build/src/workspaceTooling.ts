@@ -6,7 +6,7 @@ import { removeUnreachableTypeScriptCode } from './removeUnreachableTypeScriptCo
 import { root } from './root.ts'
 
 const require = createRequire(import.meta.url)
-const workspacePath = '/Three.js Demo | Lvce Editor'
+const workspacePath = '/Three.js-Demo'
 
 export const workspaceTooling = async (): Promise<Record<string, string>> => {
   const files: Record<string, string> = {}
