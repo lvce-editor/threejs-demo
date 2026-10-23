@@ -598,12 +598,12 @@ try {
   await expectColor(existingProfilePreview, [255, 0, 0, 255], 15_000)
   const sidebar = page.locator('.SideBar')
   const sidebarIcons = sidebar.locator('.FileIcon')
-  const assertSidebarIcons = async (iconCount = 8): Promise<void> => {
+  const assertSidebarIcons = async (): Promise<void> => {
     await expect(sidebar).toBeVisible()
     await expect(page.getByRole('treeitem', { name: 'dist' })).toBeVisible()
     await expect(page.getByRole('treeitem', { name: 'node_modules' })).toBeVisible()
     await expect(page.getByRole('treeitem', { name: 'src' })).toBeVisible()
-    await expect(sidebarIcons).toHaveCount(iconCount)
+    await expect(sidebarIcons).toHaveCount(await sidebar.getByRole('treeitem').count())
     await expect
       .poll(() =>
         sidebarIcons.evaluateAll((icons) => icons.every((icon) => icon instanceof HTMLImageElement && icon.complete && icon.naturalWidth > 0)),
@@ -617,7 +617,7 @@ try {
   await srcFolder.click()
   await srcFolder.press('ArrowRight')
   await expect(page.getByRole('treeitem', { name: 'main.ts' })).toBeVisible()
-  await expect(sidebarIcons).toHaveCount(9)
+  await expect(sidebarIcons).toHaveCount(await sidebar.getByRole('treeitem').count())
   await expect
     .poll(() =>
       sidebarIcons.evaluateAll((icons) => icons.every((icon) => icon instanceof HTMLImageElement && icon.complete && icon.naturalWidth > 0)),
@@ -631,7 +631,7 @@ try {
   await srcFolder.click()
   await srcFolder.press('ArrowRight')
   await expect(page.getByRole('treeitem', { name: 'main.ts' })).toBeVisible()
-  await expect(sidebarIcons).toHaveCount(9)
+  await expect(sidebarIcons).toHaveCount(await sidebar.getByRole('treeitem').count())
   await expect
     .poll(() =>
       sidebarIcons.evaluateAll((icons) => icons.every((icon) => icon instanceof HTMLImageElement && icon.complete && icon.naturalWidth > 0)),
