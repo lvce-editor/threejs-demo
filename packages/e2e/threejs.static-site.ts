@@ -616,7 +616,8 @@ try {
   await existingProfilePage.waitForFunction(() => globalThis.navigator.serviceWorker.controller?.scriptURL.endsWith('/demo-isolation.js'))
   expect(await existingProfilePage.evaluate(() => globalThis.crossOriginIsolated)).toBe(true)
   const existingProfilePreview = existingProfilePage.locator('.Viewlet.Preview #scene')
-  await expect(existingProfilePreview).toBeVisible()
+  // On ARM, the editor restores its preview after the service-worker reload asynchronously.
+  await expect(existingProfilePreview).toBeVisible({ timeout: 15_000 })
   await expect.poll(() => diagnostics(existingProfilePage), { timeout: 30_000 }).toBe('[]')
   await replaceSource(existingProfilePage, `${source}\nexport const typeMismatch: number = "invalid"\n`, false)
   await expect.poll(() => diagnostics(existingProfilePage), { timeout: 30_000 }).toContain("Type 'string' is not assignable to type 'number'")
