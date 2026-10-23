@@ -617,7 +617,7 @@ try {
   await srcFolder.click()
   await srcFolder.press('ArrowRight')
   await expect(page.getByRole('treeitem', { name: 'main.ts' })).toBeVisible()
-  await expect(sidebarIcons).toHaveCount(9)
+  await expect(sidebarIcons).toHaveCount(10)
   await expect
     .poll(() =>
       sidebarIcons.evaluateAll((icons) => icons.every((icon) => icon instanceof HTMLImageElement && icon.complete && icon.naturalWidth > 0)),
@@ -631,7 +631,7 @@ try {
   await srcFolder.click()
   await srcFolder.press('ArrowRight')
   await expect(page.getByRole('treeitem', { name: 'main.ts' })).toBeVisible()
-  await expect(sidebarIcons).toHaveCount(9)
+  await expect(sidebarIcons).toHaveCount(10)
   await expect
     .poll(() =>
       sidebarIcons.evaluateAll((icons) => icons.every((icon) => icon instanceof HTMLImageElement && icon.complete && icon.naturalWidth > 0)),
