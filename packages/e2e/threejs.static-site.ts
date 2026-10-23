@@ -206,15 +206,15 @@ const expectImageChanged = async (canvas: Locator, before: Buffer): Promise<void
 
 const replaceSource = async (page: Page, source: string, save: boolean = true): Promise<void> => {
   const input = page.locator('.Editor textarea')
-  await input.focus()
+  // eslint-disable-next-line e2e/no-direct-click -- establish native editor focus before setting the document selection
+  await page.locator('.Editor').click({ position: { x: 200, y: 80 } })
   await expect(input).toBeFocused()
   const current = (await rendererCommand(page, 'GetActiveEditor.getTextDocument')) as { text: string }
   const lines = current.text.split('\n')
-  await page.keyboard.press('Control+Home')
-  await page.keyboard.press('Control+a')
+  await rendererCommand(page, 'GetActiveEditor.setSelections', [[0, 0, lines.length - 1, lines.at(-1)!.length]])
   await expect.poll(() => rendererCommand(page, 'GetActiveEditor.getSelections')).toEqual([0, 0, lines.length - 1, lines.at(-1)!.length])
   // Paste preserves the complete input while selection/render commands settle.
-  await page.locator('.Editor textarea').evaluate((target, text) => {
+  await input.evaluate((target, text) => {
     const clipboardData = new DataTransfer()
     clipboardData.setData('text/plain', text)
     const event = new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData })
