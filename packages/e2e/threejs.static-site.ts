@@ -431,8 +431,12 @@ try {
   expect(await page.evaluate(() => (globalThis.performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined)?.type)).toBe(
     'navigate',
   )
+  markPhase('initial preview structure')
   await expect(previewCanvas).toBeVisible({ timeout: 30_000 })
-  await expect.poll(() => previewCanvas.evaluate((canvas) => canvas.parentElement?.tagName)).toBe('DIV')
+  // Keep this DOM assertion in Playwright's locator retry loop, including its
+  // received-value diagnostics, rather than polling unbounded evaluate calls.
+  const previewParent = previewCanvas.locator('..')
+  await expect(previewParent).toHaveJSProperty('tagName', 'DIV')
   await expectColor(previewCanvas, [50, 184, 255, 255])
   await expectAnimation(previewCanvas)
   const executeCommand = async (command: string, ...args: unknown[]): Promise<void> => {
