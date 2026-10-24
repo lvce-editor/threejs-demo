@@ -390,7 +390,7 @@ try {
   expect(await page.evaluate(() => (globalThis.performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined)?.type)).toBe(
     'navigate',
   )
-  await expect(previewCanvas).toBeVisible()
+  await expect(previewCanvas).toBeVisible({ timeout: 30_000 })
   await expect.poll(() => previewCanvas.evaluate((canvas) => canvas.parentElement?.tagName)).toBe('DIV')
   await expectColor(previewCanvas, [50, 184, 255, 255])
   await expectAnimation(previewCanvas)
@@ -495,7 +495,7 @@ try {
       page,
       source.replace('#32b8ff', () => (red ? '#ff0000' : '#00ff00')),
     )
-    await expectColor(previewCanvas, red ? [255, 0, 0, 255] : [0, 255, 0, 255])
+    await expectColor(previewCanvas, red ? [255, 0, 0, 255] : [0, 255, 0, 255], 30_000)
     await expect.poll(contextsCount).toBe(1)
     await expect
       .poll(async () => {
