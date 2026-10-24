@@ -279,7 +279,7 @@ const browser = await browserType.launch({
 const errors: string[] = [`browser ${browserType.name()} latency ${responseDelay}ms`]
 const startupTimeline: unknown[] = []
 const recordStartup = (type: string, detail: unknown): void => {
-  startupTimeline.push({ sequence: startupTimeline.length, time: performance.now(), type, detail })
+  startupTimeline.push({ detail, sequence: startupTimeline.length, time: performance.now(), type })
 }
 const fontResponses: { status: number; url: string }[] = []
 const compilerWasmRequests: string[] = []
@@ -290,23 +290,27 @@ try {
     if (message.text().startsWith('threejs-startup:')) recordStartup('browser', JSON.parse(message.text().slice('threejs-startup:'.length)))
   })
   page.on('worker', (worker) => recordStartup('worker', worker.url()))
-  page.on('requestfinished', (request) => recordStartup('request', { url: request.url(), timing: request.timing() }))
+  page.on('requestfinished', (request) => recordStartup('request', { timing: request.timing(), url: request.url() }))
   page.on('pageerror', (error) => recordStartup('pageerror', error.message))
   page.on('framenavigated', (frame) => {
     if (frame === page.mainFrame()) recordStartup('navigation', frame.url())
   })
   await page.addInitScript(() => {
     const seen = new Set<string>()
+    // eslint-disable-next-line unicorn/consistent-function-scoping -- this function runs inside the browser init script
     const record = (type: string): void => {
+      // eslint-disable-next-line no-console -- test-only structured startup diagnostic channel
       console.debug(`threejs-startup:${JSON.stringify({ time: performance.now(), type })}`)
     }
     record('init')
     const observer = new MutationObserver(() => {
       for (const selector of ['.EditorRow', '.SimpleBrowser', '.Viewlet.Preview', '#scene', '.ViewletErrorMessage']) {
-        if (!seen.has(selector) && document.querySelector(selector)) {
-          seen.add(selector)
-          record(selector)
+        if (seen.has(selector) || !document.querySelector(selector)) {
+          continue
         }
+
+        seen.add(selector)
+        record(selector)
       }
       if (seen.has('#scene')) observer.disconnect()
     })
