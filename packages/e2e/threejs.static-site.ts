@@ -7,6 +7,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { chromium, firefox } from 'playwright'
 import { PNG } from 'pngjs'
 import { verifyFirefoxCompilerWarnings } from './firefoxCompilerWarnings.ts'
+import { instrumentSandbox } from './instrumentSandbox.ts'
 import { measureStartup } from './startupMetrics.ts'
 
 const responseDelay = Number(process.env.THREEJS_DEMO_LATENCY_MS || 0)
@@ -58,7 +59,10 @@ const sandboxInstrumentation = `{
   }
   const getContext = OffscreenCanvas.prototype.getContext
   OffscreenCanvas.prototype.getContext = function (...args) {
+    const started = performance.now()
+    console.debug('threejs-startup:' + JSON.stringify({ time: started, type: 'getContext.begin', contextType: args[0] }))
     const context = getContext.apply(this, args)
+    console.debug('threejs-startup:' + JSON.stringify({ time: performance.now(), type: 'getContext.end', duration: performance.now() - started, contextType: args[0] }))
     if (context && (args[0] === 'webgl' || args[0] === 'webgl2')) {
       contexts.add(context)
       this.addEventListener('webglcontextlost', () => contexts.delete(context), { once: true })
@@ -110,7 +114,8 @@ self.addEventListener('fetch', event => event.respondWith(fetch(event.request).t
   try {
     let content = await readFile(filePath)
     if (filePath.endsWith(`${sep}${sandboxWorkerPathSuffix}`)) {
-      content = Buffer.concat([Buffer.from(sandboxInstrumentation), content])
+      const instrumented = Buffer.from(instrumentSandbox(content.toString()))
+      content = Buffer.concat([Buffer.from(sandboxInstrumentation), instrumented])
     }
     response.writeHead(200, {
       'Content-Type': contentTypes[extname(filePath)] || 'application/octet-stream',
@@ -277,10 +282,45 @@ const browser = await browserType.launch({
   ...(process.env.CI && browserType === firefox && { firefoxUserPrefs: { 'webgl.force-enabled': true } }),
 })
 const errors: string[] = [`browser ${browserType.name()} latency ${responseDelay}ms`]
+const startupTimeline: unknown[] = []
+const recordStartup = (type: string, detail: unknown): void => {
+  startupTimeline.push({ detail, sequence: startupTimeline.length, time: performance.now(), type })
+}
 const fontResponses: { status: number; url: string }[] = []
 const compilerWasmRequests: string[] = []
 try {
   const page = await browser.newPage()
+  await page.context().tracing.start({ screenshots: true, snapshots: true, sources: true })
+  page.on('console', (message) => {
+    if (message.text().startsWith('threejs-startup:')) recordStartup('browser', JSON.parse(message.text().slice('threejs-startup:'.length)))
+  })
+  page.on('worker', (worker) => recordStartup('worker', worker.url()))
+  page.on('requestfinished', (request) => recordStartup('request', { timing: request.timing(), url: request.url() }))
+  page.on('pageerror', (error) => recordStartup('pageerror', error.message))
+  page.on('framenavigated', (frame) => {
+    if (frame === page.mainFrame()) recordStartup('navigation', frame.url())
+  })
+  await page.addInitScript(() => {
+    const seen = new Set<string>()
+    // eslint-disable-next-line unicorn/consistent-function-scoping -- this function runs inside the browser init script
+    const record = (type: string): void => {
+      // eslint-disable-next-line no-console -- test-only structured startup diagnostic channel
+      console.debug(`threejs-startup:${JSON.stringify({ time: performance.now(), type })}`)
+    }
+    record('init')
+    const observer = new MutationObserver(() => {
+      for (const selector of ['.EditorRow', '.SimpleBrowser', '.Viewlet.Preview', '#scene', '.ViewletErrorMessage']) {
+        if (seen.has(selector) || !document.querySelector(selector)) {
+          continue
+        }
+
+        seen.add(selector)
+        record(selector)
+      }
+      if (seen.has('#scene')) observer.disconnect()
+    })
+    observer.observe(document, { childList: true, subtree: true })
+  })
   page.on('crash', () => {
     errors.push('page crashed')
   })
@@ -390,10 +430,23 @@ try {
   expect(await page.evaluate(() => (globalThis.performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined)?.type)).toBe(
     'navigate',
   )
+  recordStartup('initial-preview-assertion', 'begin')
   await expect(previewCanvas).toBeVisible()
+  recordStartup('initial-preview-assertion', 'passed')
   await expect.poll(() => previewCanvas.evaluate((canvas) => canvas.parentElement?.tagName)).toBe('DIV')
   await expectColor(previewCanvas, [50, 184, 255, 255])
   await expectAnimation(previewCanvas)
+  const startupReloads = Number(process.env.THREEJS_DEMO_STARTUP_RELOADS || 0)
+  if (!Number.isSafeInteger(startupReloads) || startupReloads < 0) throw new Error('THREEJS_DEMO_STARTUP_RELOADS must be a nonnegative integer')
+  for (let iteration = 0; iteration < startupReloads; iteration++) {
+    recordStartup('reload-start', iteration)
+    await page.reload()
+    await expect(sourceFirstLine).toBeVisible()
+    recordStartup('reload-preview-assertion', 'begin')
+    await expect(previewCanvas).toBeVisible()
+    recordStartup('reload-preview-assertion', 'passed')
+    await expectColor(previewCanvas, [50, 184, 255, 255])
+  }
   const executeCommand = async (command: string, ...args: unknown[]): Promise<void> => {
     const config = await page.locator('#Config').textContent()
     const { assetDir } = JSON.parse(config!)
@@ -716,6 +769,12 @@ try {
   }
   throw error
 } finally {
+  const artifacts = join(staticRoot, '..', 'e2e-artifacts')
+  await mkdir(artifacts, { recursive: true })
+  recordStartup('finish', errors)
+  await writeFile(join(artifacts, 'startup-timeline.json'), JSON.stringify(startupTimeline, null, 2))
+  const context = browser.contexts()[0]
+  if (context) await context.tracing.stop({ path: join(artifacts, 'startup-trace.zip') })
   await browser.close()
   server.close()
 }
