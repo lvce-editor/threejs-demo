@@ -58,7 +58,10 @@ const sandboxInstrumentation = `{
   }
   const getContext = OffscreenCanvas.prototype.getContext
   OffscreenCanvas.prototype.getContext = function (...args) {
+    const started = performance.now()
+    console.debug('threejs-startup:' + JSON.stringify({ time: started, type: 'getContext.begin', contextType: args[0] }))
     const context = getContext.apply(this, args)
+    console.debug('threejs-startup:' + JSON.stringify({ time: performance.now(), type: 'getContext.end', duration: performance.now() - started, contextType: args[0] }))
     if (context && (args[0] === 'webgl' || args[0] === 'webgl2')) {
       contexts.add(context)
       this.addEventListener('webglcontextlost', () => contexts.delete(context), { once: true })
