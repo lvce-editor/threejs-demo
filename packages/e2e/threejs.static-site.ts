@@ -435,7 +435,8 @@ try {
   await expect(previewCanvas).toBeVisible({ timeout: 30_000 })
   // Keep this DOM assertion in Playwright's locator retry loop, including its
   // received-value diagnostics, rather than polling unbounded evaluate calls.
-  await expect(previewCanvas.locator('..')).toHaveJSProperty('tagName', 'DIV')
+  const previewParent = previewCanvas.locator('..')
+  await expect(previewParent).toHaveJSProperty('tagName', 'DIV')
   await expectColor(previewCanvas, [50, 184, 255, 255])
   await expectAnimation(previewCanvas)
   const executeCommand = async (command: string, ...args: unknown[]): Promise<void> => {
