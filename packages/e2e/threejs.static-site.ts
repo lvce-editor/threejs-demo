@@ -436,6 +436,17 @@ try {
   await expect.poll(() => previewCanvas.evaluate((canvas) => canvas.parentElement?.tagName)).toBe('DIV')
   await expectColor(previewCanvas, [50, 184, 255, 255])
   await expectAnimation(previewCanvas)
+  const startupReloads = Number(process.env.THREEJS_DEMO_STARTUP_RELOADS || 0)
+  if (!Number.isSafeInteger(startupReloads) || startupReloads < 0) throw new Error('THREEJS_DEMO_STARTUP_RELOADS must be a nonnegative integer')
+  for (let iteration = 0; iteration < startupReloads; iteration++) {
+    recordStartup('reload-start', iteration)
+    await page.reload()
+    await expect(sourceFirstLine).toBeVisible()
+    recordStartup('reload-preview-assertion', 'begin')
+    await expect(previewCanvas).toBeVisible()
+    recordStartup('reload-preview-assertion', 'passed')
+    await expectColor(previewCanvas, [50, 184, 255, 255])
+  }
   const executeCommand = async (command: string, ...args: unknown[]): Promise<void> => {
     const config = await page.locator('#Config').textContent()
     const { assetDir } = JSON.parse(config!)

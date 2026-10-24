@@ -154,6 +154,7 @@ jobs:
         env:
           PLAYWRIGHT_BROWSERS_PATH: 0
           THREEJS_DEMO_BROWSER: firefox
+          THREEJS_DEMO_STARTUP_RELOADS: 20
       - name: Upload browser failure evidence
         if: always()
         uses: actions/upload-artifact@v4
