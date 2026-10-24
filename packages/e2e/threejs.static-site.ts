@@ -505,7 +505,9 @@ try {
   markPhase('diagnostic edit')
   await replaceSource(page, `${source}\nexport const typeMismatch: number = "invalid"\nexport type Unsafe = any\nPromise.resolve()\n`, false)
   await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain("Type 'string' is not assignable to type 'number'")
-  await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain('Unexpected any')
+  // Cold typed ESLint resolves the config graph and parses its compiler before
+  // replying to overlapping edits (38s locally, including a 29.6s second request).
+  await expect.poll(() => diagnostics(page), { timeout: 60_000 }).toContain('Unexpected any')
   await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain('Promises must be awaited')
   await replaceSource(page, source, false)
   await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toBe('[]')
