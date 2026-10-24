@@ -1,5 +1,6 @@
 /// <reference lib="dom" />
 import { expect, type Locator, type Page } from '@playwright/test'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { extname, join, normalize, sep } from 'node:path'
@@ -13,6 +14,33 @@ const responseDelay = Number(process.env.THREEJS_DEMO_LATENCY_MS || 0)
 if (!Number.isSafeInteger(responseDelay) || responseDelay < 0) throw new Error('THREEJS_DEMO_LATENCY_MS must be a nonnegative integer')
 const pathPrefix = '/threejs-demo'
 const staticRoot = join(import.meta.dirname, '..', '..', '.tmp', 'static')
+// Keep evidence outside browser RPCs: a stuck evaluate/screenshot or close must
+// still fail before the CI job deadline and leave an uploadable phase record.
+const runLabel = `${process.env.THREEJS_DEMO_BROWSER || 'chromium'}-${responseDelay}ms`
+const artifactsDirectory = join(staticRoot, '..', 'e2e-artifacts', runLabel)
+mkdirSync(artifactsDirectory, { recursive: true })
+const startedAt = Date.now()
+const progress = { phase: 'launch browser' }
+let browserState = (): unknown => ({ launching: true })
+const markPhase = (nextPhase: string): void => {
+  progress.phase = nextPhase
+  const entry = `${Date.now() - startedAt}ms ${progress.phase}`
+  process.stdout.write(`[${runLabel}] ${entry}\n`)
+  writeFileSync(
+    join(artifactsDirectory, 'phase.json'),
+    JSON.stringify({ elapsedMs: Date.now() - startedAt, phase: progress.phase, state: browserState() }, null, 2),
+  )
+}
+// eslint-disable-next-line e2e/no-timeouts -- hard process deadline for stuck browser RPCs and cleanup, not a readiness wait
+const watchdog = setTimeout(() => {
+  markPhase(`watchdog expired during ${progress.phase}`)
+  process.stderr.write(`Lifecycle exceeded 8 minutes: ${progress.phase}\n`)
+  // The runner owns browser children and cleans them up after this failed step.
+  // eslint-disable-next-line unicorn/no-process-exit -- browser RPCs may never settle; force a failed CLI exit after persisting evidence
+  process.exit(1)
+}, 8 * 60_000)
+watchdog.unref()
+markPhase(progress.phase)
 const sandboxWorkerPathSuffix = join('preview-sandbox-worker', 'dist', 'previewSandBoxWorkerMain.js')
 const contentTypes: Readonly<Record<string, string>> = {
   '.css': 'text/css',
@@ -277,6 +305,16 @@ const browser = await browserType.launch({
   ...(process.env.CI && browserType === firefox && { firefoxUserPrefs: { 'webgl.force-enabled': true } }),
 })
 const errors: string[] = [`browser ${browserType.name()} latency ${responseDelay}ms`]
+browserState = (): unknown => ({
+  errors,
+  pages: browser.contexts().flatMap((context) =>
+    context.pages().map((page) => ({
+      closed: page.isClosed(),
+      url: page.url(),
+      workers: page.workers().map((worker) => worker.url()),
+    })),
+  ),
+})
 const fontResponses: { status: number; url: string }[] = []
 const compilerWasmRequests: string[] = []
 try {
@@ -314,7 +352,9 @@ try {
     errors.push(`worker ${worker.url()}`)
   })
   const url = process.env.THREEJS_DEMO_URL || `http://127.0.0.1:${address.port}${pathPrefix}/`
+  markPhase('Firefox compiler warnings')
   await verifyFirefoxCompilerWarnings(url)
+  markPhase('initial navigation')
   const sourceFirstLine = page.locator('.EditorRow', { hasText: "import * as THREE from 'three'" })
   const previewCanvas = page.locator('.Viewlet.Preview #scene')
   const errorView = page.locator('.ViewletErrorMessage')
@@ -356,6 +396,7 @@ try {
     await expect.poll(() => icon.evaluate((element: HTMLImageElement) => element.complete && element.naturalWidth > 0)).toBe(true)
   }
   await page.goto(url)
+  markPhase('CSP probe')
   const cspProbe = await page.evaluate(async () => {
     const violationPromise = new Promise<{ blockedURI: string; directive: string }>((resolve) => {
       globalThis.addEventListener(
@@ -390,7 +431,7 @@ try {
   expect(await page.evaluate(() => (globalThis.performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined)?.type)).toBe(
     'navigate',
   )
-  await expect(previewCanvas).toBeVisible()
+  await expect(previewCanvas).toBeVisible({ timeout: 30_000 })
   await expect.poll(() => previewCanvas.evaluate((canvas) => canvas.parentElement?.tagName)).toBe('DIV')
   await expectColor(previewCanvas, [50, 184, 255, 255])
   await expectAnimation(previewCanvas)
@@ -414,6 +455,7 @@ try {
   await assertFiraCode(page, fontResponses)
   await assertLeanStartup()
   expect(compilerWasmRequests).toEqual([])
+  markPhase('preview tab lifecycle')
   const previewCloseButtons = page.locator('.SimpleBrowserTabClose')
   for (let iteration = 0; iteration < 3; iteration++) {
     await executeCommand('Layout.showPreview', `${workspaceUri}/index.html`)
@@ -453,14 +495,17 @@ try {
     await writeFile(process.env.THREEJS_DEMO_METRICS, JSON.stringify(await measureStartup(browser), null, 2))
   }
   await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toBe('[]')
+  markPhase('diagnostic edit')
   await replaceSource(page, `${source}\nexport const typeMismatch: number = "invalid"\n`, false)
   await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain("Type 'string' is not assignable to type 'number'")
+  markPhase('diagnostic edit')
   await replaceSource(page, `${source}\nexport const typeMismatch: number = "invalid"\nexport type Unsafe = any\nPromise.resolve()\n`, false)
   await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain("Type 'string' is not assignable to type 'number'")
   await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain('Unexpected any')
   await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain('Promises must be awaited')
   await replaceSource(page, source, false)
   await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toBe('[]')
+  markPhase('preview disposal and compiler startup')
   const initialResources = await resourceCounts()
   const initialTimers = initialResources.timers
   // Closing the final preview must release its contexts and sandbox worker.
@@ -489,13 +534,14 @@ try {
   await expectColor(previewCanvas, [50, 184, 255, 255], 30_000)
 
   for (let iteration = 0; iteration < 20; iteration++) {
+    markPhase(`resource cycle ${iteration}`)
     errors.push(`resource cycle ${iteration}`)
     const red = iteration % 2 === 0
     await replaceSource(
       page,
       source.replace('#32b8ff', () => (red ? '#ff0000' : '#00ff00')),
     )
-    await expectColor(previewCanvas, red ? [255, 0, 0, 255] : [0, 255, 0, 255])
+    await expectColor(previewCanvas, red ? [255, 0, 0, 255] : [0, 255, 0, 255], 30_000)
     await expect.poll(contextsCount).toBe(1)
     await expect
       .poll(async () => {
@@ -507,11 +553,12 @@ try {
   }
   expect(errors.filter((error) => error.includes('Too many active WebGL contexts'))).toEqual([])
 
+  markPhase('reload main page')
   await page.reload()
   await expect(sourceFirstLine).toBeVisible()
   await expect(page).toHaveTitle('Three.js-Demo')
-  await expect(previewCanvas).toBeVisible()
-  await expectColor(previewCanvas, [50, 184, 255, 255])
+  await expect(previewCanvas).toBeVisible({ timeout: 30_000 })
+  await expectColor(previewCanvas, [50, 184, 255, 255], 30_000)
   await expectAnimation(previewCanvas)
   expect(errors.filter((error) => error.includes('Failed to hash ESLint files in one batch'))).toEqual([])
   expect(errors.filter((error) => /(?:undefined.*send|send.*undefined)/.test(error))).toEqual([])
@@ -523,11 +570,13 @@ try {
       settings['application.useOnLoadJson'] = false
       globalThis.localStorage.setItem('settings', JSON.stringify(settings))
     })
+    markPhase('reload main page')
     await page.reload()
     await expect(sourceFirstLine).toBeVisible()
     expect(await rendererCommand(page, 'Preferences.get', ['application.useOnLoadJson'])).toBe(true)
     await expect(previewCanvas).toBeVisible()
     await expectColor(previewCanvas, [50, 184, 255, 255])
+    markPhase('diagnostic edit')
     await replaceSource(page, `${source}\nexport const typeMismatch: number = "invalid"\n`, false)
     await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain("Type 'string' is not assignable to type 'number'")
     const firstEditStartedAt = Date.now()
@@ -538,6 +587,7 @@ try {
     await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toBe('[]')
     expect(navigationErrors(errors)).toEqual([])
   }
+  markPhase('preview pointer interactions')
   const stableSource = source.replace('text.rotation.y += 0.003', 'text.rotation.y += 0').replace('#32b8ff', '#ffff00')
   await replaceSource(page, stableSource)
   await expectColor(previewCanvas, [255, 255, 0, 255])
@@ -563,11 +613,13 @@ try {
   await expectImageChanged(previewCanvas, panStart)
   expect(errors.filter((error) => error.includes('setPointerCapture is not a function'))).toEqual([])
   expect(errors.filter((error) => error.includes('Failed to hash ESLint files in one batch'))).toEqual([])
+  markPhase('reload main page')
   await page.reload()
   await expect(sourceFirstLine).toBeVisible()
   await expect(previewCanvas).toBeVisible()
   await expectColor(previewCanvas, [50, 184, 255, 255])
   await assertLeanStartup()
+  markPhase('completion startup')
   // Request completions without editing the newly reloaded, verified document.
   await page.locator('.Editor textarea').focus()
   const completionRow = source.split('\n').findIndex((line) => line.startsWith('renderer.setSize'))
@@ -595,6 +647,7 @@ try {
 
   // Check an existing browser profile with an obsolete editor font in an
   // isolated page, leaving the scene lifecycle stress sequence uninterrupted.
+  markPhase('existing profile startup')
   const existingProfilePage = await browser.newPage()
   const existingProfileFontResponses: { status: number; url: string }[] = []
   existingProfilePage.on('response', (response) => {
@@ -616,6 +669,7 @@ try {
     await globalThis.navigator.serviceWorker.register('/threejs-demo/demo-isolation.js', { scope: '/threejs-demo/' })
     await globalThis.navigator.serviceWorker.ready
   })
+  markPhase('existing profile service-worker reload')
   await existingProfilePage.reload()
   await existingProfilePage.waitForFunction(() => globalThis.navigator.serviceWorker.controller?.scriptURL.endsWith('/demo-isolation.js'))
   expect(await existingProfilePage.evaluate(() => globalThis.crossOriginIsolated)).toBe(true)
@@ -626,7 +680,8 @@ try {
   await replaceSource(existingProfilePage, `${source}\nexport const typeMismatch: number = "invalid"\n`, false)
   await expect.poll(() => diagnostics(existingProfilePage), { timeout: 30_000 }).toContain("Type 'string' is not assignable to type 'number'")
   await replaceSource(existingProfilePage, source.replace('#32b8ff', '#ff0000'))
-  await expectColor(existingProfilePreview, [255, 0, 0, 255], 15_000)
+  await expectColor(existingProfilePreview, [255, 0, 0, 255], 30_000)
+  markPhase('sidebar icons')
   const sidebar = page.locator('.SideBar')
   const sidebarIcons = sidebar.locator('.FileIcon')
   const assertSidebarIcons = async (iconCount = 8): Promise<void> => {
@@ -669,6 +724,7 @@ try {
     )
     .toBe(true)
 } catch (error) {
+  markPhase(`failure capture during ${progress.phase}`)
   const artifacts = join(staticRoot, '..', 'e2e-artifacts')
   await mkdir(artifacts, { recursive: true })
   await writeFile(join(artifacts, 'failure-assertion.txt'), error instanceof Error ? error.stack || error.message : String(error))
@@ -716,6 +772,10 @@ try {
   }
   throw error
 } finally {
+  markPhase('browser cleanup')
   await browser.close()
+  markPhase('server cleanup')
   server.close()
+  clearTimeout(watchdog)
+  markPhase('complete')
 }

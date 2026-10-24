@@ -94,7 +94,7 @@ jobs:
           THREEJS_DEMO_BROWSER: firefox
           THREEJS_DEMO_LATENCY_MS: 150
       - name: Upload browser failure evidence
-        if: failure()
+        if: failure() || cancelled()
         uses: actions/upload-artifact@v4
         with:
           name: browser-failure-${{ matrix.os }}
