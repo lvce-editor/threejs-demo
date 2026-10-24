@@ -94,9 +94,70 @@ jobs:
           THREEJS_DEMO_BROWSER: firefox
           THREEJS_DEMO_LATENCY_MS: 150
       - name: Upload browser failure evidence
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: browser-failure-${{ matrix.os }}
+          path: .tmp/e2e-artifacts
+          if-no-files-found: ignore
+
+  firefox-reproduction:
+    name: Firefox preview attempt ${{ matrix.attempt }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04]
+        attempt: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: Report runner architecture
+        run: echo "$RUNNER_OS $RUNNER_ARCH"
+        shell: bash
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: '.nvmrc'
+      - name: Compute node_modules cache key
+        id: nodeModulesCacheKey
+        run: echo "value=$(node packages/build/src/computeNodeModulesCacheKey.ts)" >> $GITHUB_OUTPUT
+        shell: bash
+      - uses: actions/cache@v6
+        id: node-modules-cache
+        with:
+          path: '**/node_modules'
+          key: ${{ runner.os }}-${{ runner.arch }}-node_modules-${{ steps.nodeModulesCacheKey.outputs.value }}
+      - run: npm ci
+        if: steps.node-modules-cache.outputs.cache-hit != 'true'
+      - run: npm run build
+      - run: npm test
+      - run: npm run type-check
+      - run: npm run lint
+      - name: Install Playwright system dependencies
+        if: runner.os == 'Linux'
+        run: sudo npx playwright install-deps chromium firefox
+        working-directory: packages/e2e
+      - name: Install Playwright browsers
+        if: steps.node-modules-cache.outputs.cache-hit != 'true'
+        run: npx playwright install chromium firefox
+        working-directory: packages/e2e
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: 0
+      - name: Test Firefox scene lifecycle
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a npm run e2e:headless --workspace=packages/e2e
+          else
+            npm run e2e:headless --workspace=packages/e2e
+          fi
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: 0
+          THREEJS_DEMO_BROWSER: firefox
+      - name: Upload browser failure evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: firefox-preview-${{ matrix.os }}-${{ matrix.attempt }}
           path: .tmp/e2e-artifacts
           if-no-files-found: ignore
