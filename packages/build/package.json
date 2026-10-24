@@ -13,7 +13,7 @@
     "@lvce-editor/preview-sandbox-worker": "^4.17.4",
     "@lvce-editor/preview-worker": "^6.20.1",
     "@lvce-editor/renderer-process": "^30.79.0",
-    "@lvce-editor/shared-process": "^0.125.13"
+    "@lvce-editor/shared-process": "^0.125.15"
   },
   "scripts": {
     "test": "node --test \"test/**/*.test.ts\""
