@@ -8,6 +8,7 @@ import { chromium, firefox } from 'playwright'
 import { PNG } from 'pngjs'
 import { verifyFirefoxCompilerWarnings } from './firefoxCompilerWarnings.ts'
 import { measureStartup } from './startupMetrics.ts'
+import { instrumentSandbox } from './instrumentSandbox.ts'
 
 const responseDelay = Number(process.env.THREEJS_DEMO_LATENCY_MS || 0)
 if (!Number.isSafeInteger(responseDelay) || responseDelay < 0) throw new Error('THREEJS_DEMO_LATENCY_MS must be a nonnegative integer')
@@ -113,7 +114,7 @@ self.addEventListener('fetch', event => event.respondWith(fetch(event.request).t
   try {
     let content = await readFile(filePath)
     if (filePath.endsWith(`${sep}${sandboxWorkerPathSuffix}`)) {
-      content = Buffer.concat([Buffer.from(sandboxInstrumentation), content])
+      content = Buffer.concat([Buffer.from(sandboxInstrumentation), Buffer.from(instrumentSandbox(content.toString()))])
     }
     response.writeHead(200, {
       'Content-Type': contentTypes[extname(filePath)] || 'application/octet-stream',
