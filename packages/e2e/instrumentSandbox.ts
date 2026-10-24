@@ -33,7 +33,7 @@ export const instrumentSandbox = (source: string): string => {
   let result = source
   for (const [target, replacement] of replacements) {
     if (result.split(target).length !== 2) throw new Error(`Sandbox diagnostic target is not unique: ${target}`)
-    result = result.replace(target, replacement)
+    result = result.replace(target, () => replacement)
   }
   return `const __threejsPhase = (type, length) => console.debug('threejs-startup:' + JSON.stringify({ type, length, time: performance.now() }));\n${result}`
 }
