@@ -277,10 +277,41 @@ const browser = await browserType.launch({
   ...(process.env.CI && browserType === firefox && { firefoxUserPrefs: { 'webgl.force-enabled': true } }),
 })
 const errors: string[] = [`browser ${browserType.name()} latency ${responseDelay}ms`]
+const startupTimeline: unknown[] = []
+const recordStartup = (type: string, detail: unknown): void => {
+  startupTimeline.push({ sequence: startupTimeline.length, time: performance.now(), type, detail })
+}
 const fontResponses: { status: number; url: string }[] = []
 const compilerWasmRequests: string[] = []
 try {
   const page = await browser.newPage()
+  await page.context().tracing.start({ screenshots: true, snapshots: true, sources: true })
+  page.on('console', (message) => {
+    if (message.text().startsWith('threejs-startup:')) recordStartup('browser', JSON.parse(message.text().slice('threejs-startup:'.length)))
+  })
+  page.on('worker', (worker) => recordStartup('worker', worker.url()))
+  page.on('requestfinished', (request) => recordStartup('request', { url: request.url(), timing: request.timing() }))
+  page.on('pageerror', (error) => recordStartup('pageerror', error.message))
+  page.on('framenavigated', (frame) => {
+    if (frame === page.mainFrame()) recordStartup('navigation', frame.url())
+  })
+  await page.addInitScript(() => {
+    const seen = new Set<string>()
+    const record = (type: string): void => {
+      console.debug(`threejs-startup:${JSON.stringify({ time: performance.now(), type })}`)
+    }
+    record('init')
+    const observer = new MutationObserver(() => {
+      for (const selector of ['.EditorRow', '.SimpleBrowser', '.Viewlet.Preview', '#scene', '.ViewletErrorMessage']) {
+        if (!seen.has(selector) && document.querySelector(selector)) {
+          seen.add(selector)
+          record(selector)
+        }
+      }
+      if (seen.has('#scene')) observer.disconnect()
+    })
+    observer.observe(document, { childList: true, subtree: true })
+  })
   page.on('crash', () => {
     errors.push('page crashed')
   })
@@ -390,7 +421,9 @@ try {
   expect(await page.evaluate(() => (globalThis.performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined)?.type)).toBe(
     'navigate',
   )
+  recordStartup('initial-preview-assertion', 'begin')
   await expect(previewCanvas).toBeVisible()
+  recordStartup('initial-preview-assertion', 'passed')
   await expect.poll(() => previewCanvas.evaluate((canvas) => canvas.parentElement?.tagName)).toBe('DIV')
   await expectColor(previewCanvas, [50, 184, 255, 255])
   await expectAnimation(previewCanvas)
@@ -716,6 +749,12 @@ try {
   }
   throw error
 } finally {
+  const artifacts = join(staticRoot, '..', 'e2e-artifacts')
+  await mkdir(artifacts, { recursive: true })
+  recordStartup('finish', errors)
+  await writeFile(join(artifacts, 'startup-timeline.json'), JSON.stringify(startupTimeline, null, 2))
+  const context = browser.contexts()[0]
+  if (context) await context.tracing.stop({ path: join(artifacts, 'startup-trace.zip') })
   await browser.close()
   server.close()
 }
