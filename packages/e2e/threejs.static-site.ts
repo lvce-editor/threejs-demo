@@ -161,11 +161,17 @@ const expectColor = async (canvas: Locator, color: readonly number[], timeout: n
         const bitmap = PNG.sync.read(await canvas.page().screenshot({ clip: bounds }))
         let matchingPixels = 0
         for (let offset = 0; offset < bitmap.data.length; offset += 4) {
-          if (
-            Math.abs(bitmap.data[offset] - color[0]) <= 8 &&
-            Math.abs(bitmap.data[offset + 1] - color[1]) <= 8 &&
-            Math.abs(bitmap.data[offset + 2] - color[2]) <= 8
-          )
+          const red = bitmap.data[offset]
+          const green = bitmap.data[offset + 1]
+          const blue = bitmap.data[offset + 2]
+          const matchesHue = color[0] > color[1] * 1.4
+            ? red > green * 1.4 && red > blue * 1.4
+            : color[1] > color[0] * 1.4
+              ? green > red * 1.4 && green > blue * 1.4
+              : color[0] > color[2] * 1.4
+                ? red > blue * 1.4 && green > blue * 1.4
+                : blue > red * 1.3 && blue > green * 1.05
+          if (matchesHue && Math.max(red, green, blue) > 35)
             matchingPixels++
         }
         return matchingPixels
@@ -173,6 +179,25 @@ const expectColor = async (canvas: Locator, color: readonly number[], timeout: n
       { timeout },
     )
     .toBeGreaterThan(25)
+}
+
+const expectMatcapShading = async (canvas: Locator): Promise<void> => {
+  const bounds = await canvas.boundingBox()
+  if (!bounds) throw new Error('Preview canvas has no bounding box')
+  const bitmap = PNG.sync.read(await canvas.page().screenshot({ clip: bounds }))
+  let highlightedPixels = 0
+  let shadedPixels = 0
+  for (let offset = 0; offset < bitmap.data.length; offset += 4) {
+    const red = bitmap.data[offset]
+    const green = bitmap.data[offset + 1]
+    const blue = bitmap.data[offset + 2]
+    if (blue > red * 1.3 && blue > green * 1.05 && Math.max(red, green, blue) > 35) {
+      shadedPixels++
+      if (Math.max(red, green, blue) > 180) highlightedPixels++
+    }
+  }
+  expect(shadedPixels).toBeGreaterThan(100)
+  expect(highlightedPixels).toBeGreaterThan(5)
 }
 
 const screenshotCanvas = async (canvas: Locator): Promise<Buffer | undefined> => {
@@ -438,6 +463,7 @@ try {
   const previewParent = previewCanvas.locator('..')
   await expect(previewParent).toHaveJSProperty('tagName', 'DIV')
   await expectColor(previewCanvas, [50, 184, 255, 255])
+  await expectMatcapShading(previewCanvas)
   await expectAnimation(previewCanvas)
   const executeCommand = async (command: string, ...args: unknown[]): Promise<void> => {
     const config = await page.locator('#Config').textContent()

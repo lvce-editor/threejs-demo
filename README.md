@@ -9,8 +9,9 @@ editor's extensions.
 
 ![Lvce Editor showing the Three.js demo source beside a live rotating 3D text preview](docs/images/threejs-demo.png)
 
-The starting scene is rotating, extruded “LVCE” text. Change `textColor` in
-`src/main.ts` and save to see the new color. A compilation error keeps the last
+The starting scene is rotating, extruded “LVCE” text with a self-contained
+blue matcap texture for metallic highlights and depth. Change `textColor` in
+`src/main.ts` and save to tint the material. A compilation error keeps the last
 successful preview; correct the source and save to recover.
 
 ```sh

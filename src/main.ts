@@ -5,6 +5,24 @@ import { Font } from 'three/addons/loaders/FontLoader.js'
 import fontData from './helvetiker_regular.typeface.json'
 
 const textColor = '#32b8ff'
+const matcapCanvas = document.createElement('canvas')
+matcapCanvas.width = 256
+matcapCanvas.height = 256
+const matcapContext = matcapCanvas.getContext('2d')!
+const matcapGradient = matcapContext.createRadialGradient(82, 68, 8, 128, 128, 180)
+matcapGradient.addColorStop(0, '#ffffff')
+matcapGradient.addColorStop(0.12, '#e7faff')
+matcapGradient.addColorStop(0.3, '#56d8ff')
+matcapGradient.addColorStop(0.62, '#1879c7')
+matcapGradient.addColorStop(0.86, '#092b62')
+matcapGradient.addColorStop(1, '#020817')
+matcapContext.fillStyle = matcapGradient
+matcapContext.fillRect(0, 0, matcapCanvas.width, matcapCanvas.height)
+matcapContext.fillStyle = 'rgba(255, 255, 255, 0.88)'
+matcapContext.beginPath()
+matcapContext.ellipse(78, 64, 25, 13, -0.65, 0, Math.PI * 2)
+matcapContext.fill()
+const matcapTexture = new THREE.CanvasTexture(matcapCanvas)
 const canvas = document.querySelector<HTMLCanvasElement>('#scene')!
 const renderer = new THREE.WebGLRenderer({ antialias: true, canvas })
 renderer.setSize(640, 480)
@@ -28,7 +46,7 @@ const geometry = new TextGeometry('LVCE', {
 })
 geometry.computeBoundingBox()
 geometry.center()
-const material = new THREE.MeshStandardMaterial({ color: textColor, metalness: 0.25, roughness: 0.35 })
+const material = new THREE.MeshMatcapMaterial({ color: textColor, matcap: matcapTexture })
 const text = new THREE.Mesh(geometry, material)
 text.rotation.x = -0.12
 scene.add(new THREE.HemisphereLight(0xff_ff_ff, 0x33_41_55, 2))
