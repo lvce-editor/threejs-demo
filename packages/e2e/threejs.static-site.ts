@@ -151,6 +151,13 @@ self.addEventListener('fetch', event => event.respondWith(fetch(event.request).t
   }
 }
 
+const colorHasExpectedHue = (red: number, green: number, blue: number, color: readonly number[]): boolean => {
+  if (color[0] > color[1] * 1.4) return red > green * 1.4 && red > blue * 1.4
+  if (color[1] > color[0] * 1.4 && color[1] > color[2] * 1.4) return green > red * 1.4 && green > blue * 1.4
+  if (color[0] > color[2] * 1.4 && color[1] > color[2] * 1.4) return red > blue * 1.4 && green > blue * 1.4
+  return blue > red * 1.3 && blue > green * 1.05
+}
+
 const expectColor = async (canvas: Locator, color: readonly number[], timeout: number = 5000): Promise<void> => {
   await expect
     .poll(
@@ -164,15 +171,7 @@ const expectColor = async (canvas: Locator, color: readonly number[], timeout: n
           const red = bitmap.data[offset]
           const green = bitmap.data[offset + 1]
           const blue = bitmap.data[offset + 2]
-          const matchesHue = color[0] > color[1] * 1.4
-            ? red > green * 1.4 && red > blue * 1.4
-            : color[1] > color[0] * 1.4
-              ? green > red * 1.4 && green > blue * 1.4
-              : color[0] > color[2] * 1.4
-                ? red > blue * 1.4 && green > blue * 1.4
-                : blue > red * 1.3 && blue > green * 1.05
-          if (matchesHue && Math.max(red, green, blue) > 35)
-            matchingPixels++
+          if (colorHasExpectedHue(red, green, blue, color) && Math.max(red, green, blue) > 35) matchingPixels++
         }
         return matchingPixels
       },
