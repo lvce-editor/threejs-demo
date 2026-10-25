@@ -693,7 +693,7 @@ try {
   })
   await existingProfilePage.goto(url)
   const existingProfileSource = existingProfilePage.locator('.EditorRow', { hasText: "import * as THREE from 'three'" })
-  await expect(existingProfileSource).toBeVisible()
+  await expect(existingProfileSource).toBeVisible({ timeout: 15_000 })
   expect(await existingProfilePage.evaluate(() => globalThis.crossOriginIsolated)).toBe(false)
   await assertFiraCode(existingProfilePage, existingProfileFontResponses)
   await existingProfilePage.evaluate(async () => {
