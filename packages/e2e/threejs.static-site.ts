@@ -171,7 +171,7 @@ const expectColor = async (canvas: Locator, color: readonly number[], timeout: n
           const red = bitmap.data[offset]
           const green = bitmap.data[offset + 1]
           const blue = bitmap.data[offset + 2]
-          if (colorHasExpectedHue(red, green, blue, color) && Math.max(red, green, blue) > 35) matchingPixels++
+          if (colorHasExpectedHue(red, green, blue, color) && Math.max(red, green, blue) > 80) matchingPixels++
         }
         return matchingPixels
       },
@@ -190,7 +190,7 @@ const expectMatcapShading = async (canvas: Locator): Promise<void> => {
     const red = bitmap.data[offset]
     const green = bitmap.data[offset + 1]
     const blue = bitmap.data[offset + 2]
-    if (blue > red * 1.3 && blue > green * 1.05 && Math.max(red, green, blue) > 35) {
+    if (blue > red * 1.3 && blue > green * 1.05 && Math.max(red, green, blue) > 80) {
       shadedPixels++
       if (Math.max(red, green, blue) > 180) highlightedPixels++
     }

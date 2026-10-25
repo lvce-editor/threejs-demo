@@ -5,11 +5,9 @@ import { Font } from 'three/addons/loaders/FontLoader.js'
 import fontData from './helvetiker_regular.typeface.json'
 
 const textColor = '#32b8ff'
-const matcapCanvas = document.createElement('canvas')
-matcapCanvas.width = 256
-matcapCanvas.height = 256
+const matcapCanvas = new OffscreenCanvas(256, 256)
 const matcapContext = matcapCanvas.getContext('2d')!
-const matcapGradient = matcapContext.createRadialGradient(82, 68, 8, 128, 128, 180)
+const matcapGradient = matcapContext.createRadialGradient(120, 116, 4, 128, 128, 180)
 matcapGradient.addColorStop(0, '#ffffff')
 matcapGradient.addColorStop(0.12, '#e7faff')
 matcapGradient.addColorStop(0.3, '#56d8ff')
@@ -17,12 +15,15 @@ matcapGradient.addColorStop(0.62, '#1879c7')
 matcapGradient.addColorStop(0.86, '#092b62')
 matcapGradient.addColorStop(1, '#020817')
 matcapContext.fillStyle = matcapGradient
-matcapContext.fillRect(0, 0, matcapCanvas.width, matcapCanvas.height)
+matcapContext.fillRect(0, 0, 256, 256)
 matcapContext.fillStyle = 'rgba(255, 255, 255, 0.88)'
 matcapContext.beginPath()
-matcapContext.ellipse(78, 64, 25, 13, -0.65, 0, Math.PI * 2)
+matcapContext.ellipse(104, 102, 25, 13, -0.65, 0, Math.PI * 2)
 matcapContext.fill()
 const matcapTexture = new THREE.CanvasTexture(matcapCanvas)
+matcapTexture.colorSpace = THREE.SRGBColorSpace
+matcapTexture.minFilter = THREE.LinearFilter
+matcapTexture.magFilter = THREE.LinearFilter
 const canvas = document.querySelector<HTMLCanvasElement>('#scene')!
 const renderer = new THREE.WebGLRenderer({ antialias: true, canvas })
 renderer.setSize(640, 480)
