@@ -263,7 +263,7 @@ const replaceSource = async (page: Page, source: string, save: boolean = true): 
   await expect(input).toBeFocused()
   const current = (await rendererCommand(page, 'GetActiveEditor.getTextDocument')) as { text: string }
   const lines = current.text.split('\n')
-  await rendererCommand(page, 'GetActiveEditor.setSelections', [[0, 0, lines.length - 1, lines.at(-1)!.length]])
+  await input.press('Control+A')
   await expect.poll(() => rendererCommand(page, 'GetActiveEditor.getSelections')).toEqual([0, 0, lines.length - 1, lines.at(-1)!.length])
   // Paste preserves the complete input while selection/render commands settle.
   await input.evaluate((target, text) => {
