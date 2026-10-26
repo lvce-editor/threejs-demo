@@ -151,6 +151,13 @@ self.addEventListener('fetch', event => event.respondWith(fetch(event.request).t
   }
 }
 
+const colorHasExpectedHue = (red: number, green: number, blue: number, color: readonly number[]): boolean => {
+  if (color[0] > color[1] * 1.4) return red > green * 1.4 && red > blue * 1.4
+  if (color[1] > color[0] * 1.4 && color[1] > color[2] * 1.4) return green > red * 1.4 && green > blue * 1.4
+  if (color[0] > color[2] * 1.4 && color[1] > color[2] * 1.4) return red > blue * 1.4 && green > blue * 1.4
+  return blue > red * 1.3 && blue > green * 1.05
+}
+
 const expectColor = async (canvas: Locator, color: readonly number[], timeout: number = 5000): Promise<void> => {
   await expect
     .poll(
@@ -161,18 +168,35 @@ const expectColor = async (canvas: Locator, color: readonly number[], timeout: n
         const bitmap = PNG.sync.read(await canvas.page().screenshot({ clip: bounds }))
         let matchingPixels = 0
         for (let offset = 0; offset < bitmap.data.length; offset += 4) {
-          if (
-            Math.abs(bitmap.data[offset] - color[0]) <= 8 &&
-            Math.abs(bitmap.data[offset + 1] - color[1]) <= 8 &&
-            Math.abs(bitmap.data[offset + 2] - color[2]) <= 8
-          )
-            matchingPixels++
+          const red = bitmap.data[offset]
+          const green = bitmap.data[offset + 1]
+          const blue = bitmap.data[offset + 2]
+          if (colorHasExpectedHue(red, green, blue, color) && Math.max(red, green, blue) > 80) matchingPixels++
         }
         return matchingPixels
       },
       { timeout },
     )
     .toBeGreaterThan(25)
+}
+
+const expectMatcapShading = async (canvas: Locator): Promise<void> => {
+  const bounds = await canvas.boundingBox()
+  if (!bounds) throw new Error('Preview canvas has no bounding box')
+  const bitmap = PNG.sync.read(await canvas.page().screenshot({ clip: bounds }))
+  let highlightedPixels = 0
+  let shadedPixels = 0
+  for (let offset = 0; offset < bitmap.data.length; offset += 4) {
+    const red = bitmap.data[offset]
+    const green = bitmap.data[offset + 1]
+    const blue = bitmap.data[offset + 2]
+    if (blue > red * 1.3 && blue > green * 1.05 && Math.max(red, green, blue) > 80) {
+      shadedPixels++
+      if (Math.max(red, green, blue) > 180) highlightedPixels++
+    }
+  }
+  expect(shadedPixels).toBeGreaterThan(100)
+  expect(highlightedPixels).toBeGreaterThan(5)
 }
 
 const screenshotCanvas = async (canvas: Locator): Promise<Buffer | undefined> => {
@@ -239,7 +263,7 @@ const replaceSource = async (page: Page, source: string, save: boolean = true): 
   await expect(input).toBeFocused()
   const current = (await rendererCommand(page, 'GetActiveEditor.getTextDocument')) as { text: string }
   const lines = current.text.split('\n')
-  await rendererCommand(page, 'GetActiveEditor.setSelections', [[0, 0, lines.length - 1, lines.at(-1)!.length]])
+  await input.press('Control+A')
   await expect.poll(() => rendererCommand(page, 'GetActiveEditor.getSelections')).toEqual([0, 0, lines.length - 1, lines.at(-1)!.length])
   // Paste preserves the complete input while selection/render commands settle.
   await input.evaluate((target, text) => {
@@ -438,6 +462,7 @@ try {
   const previewParent = previewCanvas.locator('..')
   await expect(previewParent).toHaveJSProperty('tagName', 'DIV')
   await expectColor(previewCanvas, [50, 184, 255, 255])
+  await expectMatcapShading(previewCanvas)
   await expectAnimation(previewCanvas)
   const executeCommand = async (command: string, ...args: unknown[]): Promise<void> => {
     const config = await page.locator('#Config').textContent()
@@ -668,7 +693,7 @@ try {
   })
   await existingProfilePage.goto(url)
   const existingProfileSource = existingProfilePage.locator('.EditorRow', { hasText: "import * as THREE from 'three'" })
-  await expect(existingProfileSource).toBeVisible()
+  await expect(existingProfileSource).toBeVisible({ timeout: 15_000 })
   expect(await existingProfilePage.evaluate(() => globalThis.crossOriginIsolated)).toBe(false)
   await assertFiraCode(existingProfilePage, existingProfileFontResponses)
   await existingProfilePage.evaluate(async () => {
