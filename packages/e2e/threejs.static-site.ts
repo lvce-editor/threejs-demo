@@ -496,7 +496,8 @@ try {
     await expect(previewCloseButtons).toHaveCount(1)
     await expectColor(previewCanvas, [50, 184, 255, 255])
   }
-  const source = await readFile(join(import.meta.dirname, '../../src/main.ts'), 'utf8')
+  const originalSource = await readFile(join(import.meta.dirname, '../../src/main.ts'), 'utf8')
+  const source = originalSource.replace('const matcapCycleInterval = 7000', 'const matcapCycleInterval = 1000000000')
   expect(navigationErrors(errors)).toEqual([])
   const resourceCounts = async (): Promise<{ contexts: number; timers: number }> => {
     const workers = page.workers().filter((worker) => worker.url().includes('/preview-sandbox-worker/'))
@@ -646,7 +647,7 @@ try {
   expect(errors.filter((error) => error.includes('Failed to hash ESLint files in one batch'))).toEqual([])
   const stableMatcapSource = source
     .replace('text.rotation.y += 0.003', 'text.rotation.y += 0')
-    .replace('const matcapCycleInterval = 7000', 'const matcapCycleInterval = 100')
+    .replace('const matcapCycleInterval = 1000000000', 'const matcapCycleInterval = 100')
   await replaceSource(page, stableMatcapSource)
   await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toBe('[]')
   await expectColor(previewCanvas, [50, 184, 255, 255])
