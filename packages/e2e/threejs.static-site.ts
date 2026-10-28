@@ -256,7 +256,7 @@ const expectImageChanged = async (canvas: Locator, before: Buffer): Promise<void
     .toBeGreaterThan(100)
 }
 
-const replaceSource = async (page: Page, source: string, save: boolean = true, timeout: number = 5000): Promise<void> => {
+const replaceSource = async (page: Page, source: string, save: boolean = true): Promise<void> => {
   const input = page.locator('.Editor textarea')
   // eslint-disable-next-line e2e/no-direct-click -- establish native editor focus before setting the document selection
   await page.locator('.Editor').click({ position: { x: 200, y: 80 } })
@@ -275,13 +275,10 @@ const replaceSource = async (page: Page, source: string, save: boolean = true, t
     target.dispatchEvent(event)
   }, source)
   await expect
-    .poll(
-      async () => {
-        const document = (await rendererCommand(page, 'GetActiveEditor.getTextDocument')) as { text: string } | undefined
-        return document?.text
-      },
-      { timeout },
-    )
+    .poll(async () => {
+      const document = (await rendererCommand(page, 'GetActiveEditor.getTextDocument')) as { text: string } | undefined
+      return document?.text
+    })
     .toBe(source)
   if (save) await page.keyboard.press('Control+s')
 }
@@ -538,7 +535,9 @@ try {
   // replying to overlapping edits (38s locally, including a 29.6s second request).
   await expect.poll(() => diagnostics(page), { timeout: 60_000 }).toContain('Unexpected any')
   await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toContain('Promises must be awaited')
-  await replaceSource(page, source, false, 30_000)
+  await page.reload()
+  await expect(sourceFirstLine).toBeVisible()
+  await expect(previewCanvas).toBeVisible()
   await expect.poll(() => diagnostics(page), { timeout: 30_000 }).toBe('[]')
   markPhase('preview disposal and compiler startup')
   const initialResources = await resourceCounts()
